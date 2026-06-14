@@ -1,0 +1,52 @@
+# Private Screeps server for the integration suite (NEVER the public MMO).
+#
+# screepers/screeps-launcher boots the official server packages plus mods:
+#   - screepsmod-mongo       → persistence in the mongo/redis services below
+#   - screepsmod-auth        → password signin (POST /api/auth/signin), the
+#                              same private-server auth path the bridge uses
+#   - screepsmod-admin-utils → runtime admin helpers (tick rate etc.)
+#
+# Ports:
+#   21025 — HTTP API + WebSocket (what the bridge talks to)
+#   21026 — server CLI (the harness's bootstrap/god-mode channel)
+#
+# STEAM_KEY: the vanilla server insists on one at boot, but it is only used
+# for Steam-ticket signin, which the harness never does (password auth via
+# screepsmod-auth). A dummy value is fine; override with a real key if you
+# also want to log in with the Steam client.
+
+services:
+  mongo:
+    image: mongo:4.4
+    command: --quiet
+    volumes:
+      - screeps-mongo:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:6-alpine
+    volumes:
+      - screeps-redis:/data
+    restart: unless-stopped
+
+  screeps:
+    image: screepers/screeps-launcher:latest
+    depends_on:
+      - mongo
+      - redis
+    ports:
+      - "21025:21025" # HTTP API + WS
+      - "21026:21026" # server CLI
+    environment:
+      MONGO_HOST: mongo
+      REDIS_HOST: redis
+      STEAM_KEY: ${STEAM_KEY:-0000000000000000000000000000000A}
+    volumes:
+      - ./server/config.yml:/screeps/config.yml
+      - screeps-data:/screeps
+    restart: unless-stopped
+
+volumes:
+  screeps-mongo:
+  screeps-redis:
+  screeps-data:

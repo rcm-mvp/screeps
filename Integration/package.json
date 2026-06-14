@@ -1,0 +1,28 @@
+{
+  "name": "screeps-integration-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-repo integration harness: deploys the real Bot bundle to a private Screeps server and drives it through the real bridge, asserting the Memory.bridge contract round-trips end to end.",
+  "type": "commonjs",
+  "scripts": {
+    "itest": "node scripts/run-local.mjs",
+    "itest:keep": "node scripts/run-local.mjs --keep",
+    "test": "vitest run",
+    "test:hermetic": "vitest run -c vitest.hermetic.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "server:up": "docker compose up -d",
+    "server:down": "docker compose down -v",
+    "server:logs": "docker compose logs --tail 200 screeps"
+  },
+  "dependencies": {
+    "screeps-web-api-bridge": "file:../API"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "screeps-executor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "In-game Screeps executor — runs the colony every tick, steered via the shared Memory.bridge contract.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "node build.mjs && node scripts/smoke.mjs && node scripts/traffic-smoke.mjs",
+    "push": "node scripts/push.mjs",
+    "deploy": "node build.mjs && node scripts/push.mjs"
+  },
+  "devDependencies": {
+    "@types/screeps": "^3.3.8",
+    "esbuild": "^0.21.5",
+    "screeps-web-api-bridge": "file:../API",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

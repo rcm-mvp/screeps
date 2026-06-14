@@ -1,0 +1,84 @@
+# Cross-repo contract round-trip: real Bot bundle, real bridge, private
+# Screeps server in docker compose. This is the regression gate that lets
+# API/, Bot/ or UI/ change independently without silently breaking the seam.
+#
+# The server runs via `docker compose` in a step (not a GitHub `services:`
+# block) so scenario H can restart it mid-suite.
+
+name: integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract-roundtrip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SCREEPS_PRIVATE_HOST: http://127.0.0.1:21025
+      SCREEPS_CLI_HOST: 127.0.0.1
+      SCREEPS_CLI_PORT: "21026"
+      SCREEPS_TICK_MS: "150"
+      SCREEPS_RESTART_CMD: docker compose restart screeps
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            API/package-lock.json
+            Bot/package-lock.json
+            Integration/package-lock.json
+
+      # Build the REAL artifacts the harness deploys — never reimplementations.
+      - name: Build bridge (API)
+        run: |
+          npm ci --prefix API
+          npm run build --prefix API
+
+      - name: Build executor bundle (Bot)
+        run: |
+          npm ci --prefix Bot
+          npm run build --prefix Bot
+
+      - name: Install harness deps
+        run: npm ci --prefix Integration
+
+      - name: Start private Screeps server
+        working-directory: Integration
+        run: docker compose up -d
+
+      # First boot npm-installs the server mods inside the container; the
+      # harness's own globalSetup also polls, but failing fast here with logs
+      # beats a long opaque vitest hook timeout.
+      - name: Wait for server API
+        working-directory: Integration
+        run: |
+          for i in $(seq 1 150); do
+            if curl -fsS http://127.0.0.1:21025/api/version > /dev/null 2>&1; then
+              echo "server is up"; exit 0
+            fi
+            sleep 4
+          done
+          echo "::error::private server never became ready"
+          docker compose logs --tail 200 screeps
+          exit 1
+
+      - name: Run integration suite (scenarios A–I)
+        run: npm test --prefix Integration
+
+      - name: Server logs on failure
+        if: failure()
+        working-directory: Integration
+        run: docker compose logs --tail 400 screeps
+
+      - name: Teardown
+        if: always()
+        working-directory: Integration
+        run: docker compose down -v
