@@ -24,6 +24,7 @@ import { nextId } from './util';
 export type PanelId =
   | 'connection'
   | 'colony'
+  | 'strategist'
   | 'cpu'
   | 'console'
   | 'room'

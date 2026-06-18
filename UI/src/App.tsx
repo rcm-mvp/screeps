@@ -10,6 +10,7 @@ import { Dot } from './components/common';
 import { Sparkline } from './components/Sparkline';
 import { ConnectionPanel } from './panels/ConnectionPanel';
 import { ColonyPanel } from './panels/ColonyPanel';
+import { StrategistPanel } from './panels/StrategistPanel';
 import { CpuPanel } from './panels/CpuPanel';
 import { ConsolePanel } from './panels/ConsolePanel';
 import { RoomPanel } from './panels/RoomPanel';
@@ -24,6 +25,7 @@ import { RateLimitPanel } from './panels/RateLimitPanel';
 const PANELS: Array<{ id: PanelId; label: string; component: () => JSX.Element }> = [
   { id: 'connection', label: 'Connection', component: ConnectionPanel },
   { id: 'colony', label: 'Colony', component: ColonyPanel },
+  { id: 'strategist', label: 'AI Strategist', component: StrategistPanel },
   { id: 'cpu', label: 'CPU & Memory', component: CpuPanel },
   { id: 'console', label: 'Console', component: ConsolePanel },
   { id: 'room', label: 'Room Viewer', component: RoomPanel },
@@ -113,7 +115,13 @@ export default function App() {
               key={p.id}
               className={`nav-item ${p.id === active ? 'nav-active' : ''}`}
               onClick={() => setPanel(p.id)}
-              disabled={!connected && p.id !== 'connection' && p.id !== 'rawapi' && p.id !== 'ratelimits'}
+              disabled={
+                !connected &&
+                p.id !== 'connection' &&
+                p.id !== 'rawapi' &&
+                p.id !== 'ratelimits' &&
+                p.id !== 'strategist'
+              }
             >
               {p.label}
             </button>

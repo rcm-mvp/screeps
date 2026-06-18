@@ -9,6 +9,7 @@
 import { setMovePriority } from './traffic';
 
 const STUCK_TICKS = 3;
+const ROOM_NAME_RE = /^[EW]\d+[NS]\d+$/;
 
 export function travelTo(
   creep: Creep,
@@ -31,6 +32,10 @@ export function travelTo(
 }
 
 export function travelToRoom(creep: Creep, roomName: string, priority = 1): ScreepsReturnCode {
+  // A missing/garbled room name (e.g. an un-homed adopted creep) must never reach
+  // `new RoomPosition` — roomNameToXY hard-throws on it and would crash the creep
+  // every tick. Degrade to a no-op; adoptCreeps() backfills `home` before creeps run.
+  if (!roomName || !ROOM_NAME_RE.test(roomName)) return ERR_INVALID_ARGS;
   if (creep.room.name === roomName && !onExit(creep.pos)) return OK;
   return travelTo(creep, new RoomPosition(25, 25, roomName), 22, priority);
 }

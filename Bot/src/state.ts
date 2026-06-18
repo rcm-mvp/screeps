@@ -4,9 +4,18 @@
  * heartbeat stays fresh.
  */
 import type { ColonyState, ExecutorState } from './contract';
+import type { BasePlanSummary } from './lib/planner/types';
 import { ensureBridgeMemory } from './memory';
 import { roomHeap } from './heap';
 import { ownedRooms, bucket } from './lib/game';
+import { SETTINGS } from './settings';
+
+/**
+ * Executor-side extension of the per-colony state: base-build progress from the
+ * planner. Like `cpuBySubsystem`, it's an extra field contract-unaware readers
+ * simply ignore — the canonical contract stays frozen.
+ */
+type ExecutorColonyState = ColonyState['colonies'][string] & { basePlan?: BasePlanSummary };
 
 export interface Census {
   total: number;
@@ -31,13 +40,19 @@ export function buildCensus(): Census {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/** Carry a prior error forward only while it's within ERROR_TTL of now. */
+function freshError(prev: ColonyState['lastError'] | undefined): ColonyState['lastError'] {
+  if (!prev) return null;
+  return Game.time - prev.tick <= SETTINGS.ERROR_TTL ? prev : null;
+}
+
 export function writeState(census: Census, tickErrors: string[], cpuBySubsystem: Record<string, number>): void {
   const bridge = ensureBridgeMemory();
 
-  const colonies: ColonyState['colonies'] = {};
+  const colonies: Record<string, ExecutorColonyState> = {};
   for (const room of ownedRooms()) {
     const rh = roomHeap(room.name); // defense already populated it this tick
-    const colony: ColonyState['colonies'][string] = {
+    const colony: ExecutorColonyState = {
       rcl: room.controller?.level ?? 0,
       energyAvailable: room.energyAvailable,
       energyCapacity: room.energyCapacityAvailable,
@@ -46,6 +61,7 @@ export function writeState(census: Census, tickErrors: string[], cpuBySubsystem:
       threats: { hostiles: rh.hostiles, safeMode: (room.controller?.safeMode ?? 0) > 0 },
     };
     if (room.storage) colony.storageEnergy = room.storage.store[RESOURCE_ENERGY];
+    if (room.memory.plan) colony.basePlan = room.memory.plan.summary;
     colonies[room.name] = colony;
   }
 
@@ -63,9 +79,11 @@ export function writeState(census: Census, tickErrors: string[], cpuBySubsystem:
     credits: typeof Game.market !== 'undefined' && typeof Game.market.credits === 'number' ? Game.market.credits : 0,
     colonies,
     creeps: { total: census.total, byRole: census.byRole },
+    // Stamp this tick's error if any; otherwise carry the previous one only while
+    // it's still fresh, so a single transient throw doesn't stick around forever.
     lastError: tickErrors.length
       ? { tick: Game.time, message: tickErrors[tickErrors.length - 1].slice(0, 500) }
-      : bridge.state.lastError ?? null,
+      : freshError(bridge.state.lastError),
     heartbeat: Game.time,
     cpuBySubsystem: cpuRounded,
   };

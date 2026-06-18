@@ -103,8 +103,8 @@ src/
     spawn.ts           fills quotas by priority, best affordable body, emergency
                        bootstrap when income hits zero
     logistics.ts       one shared supply/demand snapshot per room per tick
-    construction.ts    source containers → tower → extension ring → roads
-                       (interval- and bucket-gated; ring = base-plan stub)
+    construction.ts    RCL-gated incremental placement from the cached base
+                       plan (interval- and bucket-gated) — see "Base planner"
   roles/             OPERATIONAL — each creep finishes its task autonomously:
     harvester hauler upgrader builder miner defender claimer scout
     index.ts           registry + paused gate; common.ts; context.ts
@@ -112,6 +112,9 @@ src/
                      energy acquisition, game helpers
     traffic.ts         flow-based traffic manager (collision/deadlock resolver),
                        run once per room at loop end — see "Adopted techniques"
+    planner/           automated base planner: distance transform → anchor →
+                       bunker stamp → min-cut ramparts → roads (plan once,
+                       cache, place incrementally) — see "Base planner"
 ```
 
 The three layers only touch through `Memory.plan` (strategy → tactics) and
@@ -179,6 +182,7 @@ state/ack and three-layer architecture are unchanged by any of this.
 | Technique | Source | License | What we did |
 |---|---|---|---|
 | Flow-based traffic management ([`lib/traffic.ts`](src/lib/traffic.ts)) | [Screeps-Traffic-Manager](https://github.com/sy-harabi/Screeps-Traffic-Manager) + [writeup](https://sy-harabi.github.io/Journey-to-Solving-the-Traffic-Management-Problem/) | **None** (repo has no license file → all-rights-reserved) | **Reimplemented** from the documented approach. No source copied. |
+| Base planner: distance transform, min-cut ramparts, bunker stamp ([`lib/planner/`](src/lib/planner/)) | Standard Screeps community algorithms (distance-transform openness maps; the max-flow/min-cut rampart technique popularised by Saruss & others) | n/a (well-known algorithms/ideas) | **Reimplemented** in our own TS (Dinic's min-cut, two-pass Chebyshev transform, our own stamp layout). Nothing vendored. |
 | Early-economy patterns (static container miners + haulers, energy-scaled body sizing, RCL/construction order) | [screeps-harabi-bot-sample](https://github.com/sy-harabi/screeps-harabi-bot-sample) (reference) | n/a (patterns/ideas) | **Ported as patterns** into our TS roles/managers — these largely predate this update and were already present (`roles/miner.ts`, `roles/hauler.ts`, `managers/logistics.ts`, `managers/spawn.ts`, `lib/bodies.ts`, `managers/construction.ts`). |
 | Cross-room logistics (terminal/storage balancing) | Harabi "Logistics" writeup | n/a (ideas) | **Deferred** — clean extension point left at `managers/logistics.ts#runInterColonyLogistics` (see §3). |
 
@@ -214,12 +218,71 @@ Validated by [`scripts/traffic-smoke.mjs`](scripts/traffic-smoke.mjs)
 (corridor swap, idle displacement, priority contest, pinned-miner), wired into
 `npm run smoke`.
 
+### Base planner
+
+`lib/planner/` replaces the old extension-ring stub with a real planner. The
+**plan is computed once per room and cached**; per-tick work is just cheap
+incremental site placement.
+
+**Pipeline** (`planner/plan.ts#computePlan`, run once, bucket-gated):
+
+1. **Distance transform** (`distanceTransform.ts`) — two-pass Chebyshev
+   openness map; room edges count as walls so the base avoids exits.
+2. **Anchor** (`anchor.ts`) — prefer an existing spawn (so the base grows
+   around the live colony), else the highest-openness tile that clears the
+   stamp, sits ≥ `EXIT_MARGIN` from exits, and can reach every source +
+   controller (+ mineral). The whole stamp is validated against terrain.
+3. **Bunker stamp** (`stamp.ts`) — one fixed checkerboard layout: structures on
+   the anchor's parity (so every one borders a walkable gap and the interior is
+   reachable), filled spiralling out in priority order (core central,
+   extensions outer). Each structure is tagged with its unlock RCL from
+   `CONTROLLER_STRUCTURES`. Source/controller containers are derived adjacent.
+4. **Min-cut ramparts** (`mincut.ts`) — **Dinic's max-flow** over a tile-split
+   graph (each tile = in/out node, capacity 1; protected interior = source,
+   room frame = sink). The cut is the minimal rampart ring that seals the base.
+   Same max-flow family as the traffic manager.
+5. **Roads** (`roads.ts`) — `PathFinder` from the anchor to sources /
+   controller / mineral / exits over the plan's cost matrix, plus the bunker's
+   internal spine.
+
+**Caching.** The packed plan lives in a **`RawMemory` segment**
+(`SETTINGS.PLAN_SEGMENT`, default 90) as a `roomName → plan` map — `Memory` is
+serialized every tick, so the heavy plan stays out of it. `RoomMemory.plan`
+holds only a `{ version, segment, summary }` pointer; the decoded plan is cached
+on the heap (rebuilt from the segment after a global reset — note the one-tick
+async segment delay, handled transparently). A compact progress summary
+(anchor, built/planned, ramparts, %) is mirrored into `state.colonies[room].basePlan`
+for the UI (an executor-side extension, like `cpuBySubsystem`; the contract is
+untouched).
+
+**Placement** (`construction.ts`, every `CONSTRUCTION_INTERVAL` ticks): places
+only the sites the current RCL unlocks, in priority order **spawn → extensions
+→ towers → containers → storage → links → … → ramparts → roads**, respecting
+per-RCL `CONTROLLER_STRUCTURES` counts, the per-tick cap (`PLACE_PER_TICK`), the
+per-room cap (`MAX_SITES_PER_ROOM`) and the account-wide 100-site cap.
+
+**Replanning.** Planning runs only when there's no valid cached plan *and*
+`bucket() >= PLAN_BUCKET` (default 9000) — never deferring defense. To force a
+full replan, **bump `SETTINGS.PLAN_VERSION`** (invalidates every cached plan);
+a foreign structure landing on the anchor also invalidates. A *destroyed* anchor
+spawn isn't a replan — the tile just gets re-queued. Toggle `PLAN_OVERLAY` for a
+`RoomVisual` debug overlay of the whole plan.
+
+**CPU.** Planning (especially the min-cut) is the only expensive part and is
+one-shot + bucket-gated; steady-state cost is just the bounded incremental
+placement, reported under `cpuBySubsystem.construction`. Validated by
+[`scripts/planner-smoke.mjs`](scripts/planner-smoke.mjs) (distance-transform
+correctness, anchor constraints, per-RCL stamp limits, **min-cut sealing**, and
+RCL/cap-gated placement), wired into `npm run smoke`.
+
 ## Baseline behaviour (zero directives)
 
 RCL 1: harvesters (mine → deliver → fallback upgrade) + one upgrader bring
-the room to RCL 2. Construction places a container at each source, then the
-extension ring; once capacity ≥ 550 **and** a source container exists,
-static miners (5×WORK parked on the container) + haulers replace harvesters.
+the room to RCL 2. Once the CPU bucket is healthy the planner computes a bunker
+plan around the spawn and construction starts placing it — source/controller
+containers and the spawn-tier extensions first; once capacity ≥ 550 **and** a
+source container exists, static miners (5×WORK parked on the container) +
+haulers replace harvesters.
 Builders keep sites moving and repair; a tower goes up at RCL 3 and takes
 over defense from emergency-spawned defenders. If income ever hits zero, the
 spawn manager ignores quotas and bootstraps a harvester with whatever energy
@@ -231,8 +294,10 @@ is available.
   colony, let `logistics.ts`/`construction.ts` emit tasks, and replace the
   runner table in `roles/index.ts` with a claim-and-execute scheduler. The
   contract, managers, and main loop are already agnostic to it.
-- **Real base planning:** `construction.ts`'s ring placement is the stub —
-  have strategy write a layout into the plan and let construction execute it.
+- **Base planning:** ✅ done — see [§ Base planner](#base-planner). Possible
+  next steps: source/controller links (deferred so the 6-link budget stays in
+  the bunker), a mineral extractor stamp, and feeding the plan's CostMatrix to
+  `runTraffic` so displaced creeps avoid reserved tiles.
 - **Multi-room logistics:** `logistics.ts#runInterColonyLogistics` is a no-op
   extension point — implement terminal/storage balancing there once the colony
   spans rooms, and call it (interval+bucket-gated) after the per-room loop.

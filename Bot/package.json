@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke": "node build.mjs && node scripts/smoke.mjs && node scripts/traffic-smoke.mjs",
+    "smoke": "node build.mjs && node scripts/smoke.mjs && node scripts/traffic-smoke.mjs && node scripts/planner-smoke.mjs",
     "push": "node scripts/push.mjs",
     "deploy": "node build.mjs && node scripts/push.mjs"
   },

@@ -4,10 +4,17 @@
  * tick, and nothing correctness-critical may live only here.
  */
 import { log } from './lib/log';
+import type { RoomPlan, PackedPlan } from './lib/planner/types';
 
 export interface LogisticsPickup {
   id: string;
   amount: number;
+}
+
+/** Decoded base plan cached on the heap (re-decoded from the segment on reset). */
+export interface PlanCacheEntry {
+  v: number;
+  decoded: RoomPlan;
 }
 
 /** Per-room scratch data, valid for exactly one tick. */
@@ -28,12 +35,16 @@ export interface RoomHeapEntry {
 export interface Heap {
   bornAt: number;
   rooms: Record<string, RoomHeapEntry>;
+  /** Decoded base plans, keyed by room. Rebuilt from the segment after a reset. */
+  plans: Record<string, PlanCacheEntry>;
+  /** Packed plan map mirroring the RawMemory segment; undefined until loaded. */
+  planMap?: Record<string, PackedPlan>;
 }
 
 export function ensureHeap(): Heap {
   const g = global as unknown as { __heap?: Heap };
   if (!g.__heap) {
-    g.__heap = { bornAt: Game.time, rooms: {} };
+    g.__heap = { bornAt: Game.time, rooms: {}, plans: {} };
     log.info('global reset detected — heap rebuilt');
   }
   return g.__heap;

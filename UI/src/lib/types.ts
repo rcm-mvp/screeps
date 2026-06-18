@@ -26,7 +26,7 @@ export type {
   ServerPreset,
 } from 'screeps-web-api-bridge';
 
-import type { MeProfile, RateLimitBudget } from 'screeps-web-api-bridge';
+import type { Directives, MeProfile, RateLimitBudget } from 'screeps-web-api-bridge';
 
 /** Screeps live-socket state as reported by the host. */
 export type GameSocketState =
@@ -66,6 +66,64 @@ export interface ApiErrorInfo {
   rateLimitClass?: string;
   status?: number;
   body?: unknown;
+}
+
+/* ------------------------------------------------------------------ */
+/* AI Strategist (proxied via /api/strategist/* to the strategist service) */
+/* ------------------------------------------------------------------ */
+
+export type DeciderKind = 'rules' | 'ollama';
+
+export type StrategistStatusKind =
+  | 'starting'
+  | 'idle'
+  | 'live'
+  | 'dry-run'
+  | 'kill-switch'
+  | 'awaiting-executor'
+  | 'executor-stalled'
+  | 'budget-capped'
+  | 'error';
+
+export type DecisionOutcome =
+  | 'written'
+  | 'dry-run'
+  | 'no-change'
+  | 'blocked'
+  | 'budget-capped'
+  | 'skipped'
+  | 'error';
+
+export interface StrategistDecision {
+  id: number;
+  ts: number;
+  tick: number | null;
+  decider: DeciderKind;
+  outcome: DecisionOutcome;
+  patch: Directives | null;
+  rev?: number;
+  appliedConfirmed?: boolean;
+  blocked?: string[];
+  note?: string;
+  trigger?: string;
+}
+
+/** GET /api/strategist/state response (the strategist's StatusSnapshot). */
+export interface StrategistState {
+  status: StrategistStatusKind;
+  decider: DeciderKind;
+  dryRun: boolean;
+  killSwitch: boolean;
+  connected: boolean;
+  tick: number | null;
+  heartbeat: number | null;
+  budget: { writesThisHour: number; maxPerHour: number };
+  ollamaCalls: number;
+  currentDirectives: Directives;
+  digest: unknown | null;
+  steering: { shortTerm: string | null; longTerm: string | null };
+  latestWritten: StrategistDecision | null;
+  history: StrategistDecision[];
 }
 
 /** Frames the host pushes over /bridge-ws. */

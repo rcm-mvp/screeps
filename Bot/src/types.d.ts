@@ -1,4 +1,5 @@
 import type { BridgeMemory, StrategyPlan } from './contract';
+import type { PlanPointer } from './lib/planner/types';
 
 declare global {
   // Sandbox globals not covered by @types/screeps (no DOM/Node libs in play).
@@ -31,8 +32,9 @@ declare global {
 
   interface RoomMemory {
     lastNotifyAt?: number;
-    roadsPlannedAt?: number;
-    roadsPlannedRcl?: number;
+    /** Base-plan pointer: version + segment id + compact progress summary. The
+     *  heavy plan (structures/ramparts/roads) lives in the RawMemory segment. */
+    plan?: PlanPointer;
     intel?: { scoutedAt: number; sources: number; owner?: string; level?: number; hostiles: number };
   }
 }

@@ -62,6 +62,9 @@ function loadDotEnv(): void {
 loadDotEnv();
 
 const PORT = Number(process.env.BRIDGE_UI_PORT ?? 4000);
+/** The (optional) external AI strategist service. The UI proxies to it but never
+ *  depends on it — the dashboard runs fine with the strategist offline. */
+const STRATEGIST_URL = (process.env.STRATEGIST_URL ?? 'http://localhost:4100').replace(/\/$/, '');
 
 type SocketState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'auth-failed';
 
@@ -153,6 +156,47 @@ function mapError(e: unknown): { status: number; body: Record<string, unknown> }
     status: 500,
     body: { error: { kind: 'unknown', message: e instanceof Error ? e.message : String(e) } },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* AI Strategist proxy (separate, optional service)                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Forward a request to the standalone strategist service. When it is unreachable
+ * we return 503 with a friendly marker so the panel can show "offline" rather than
+ * erroring — the strategist is optional and the UI never couples to it.
+ */
+async function proxyStrategist(
+  method: string,
+  subpath: string,
+  body?: unknown,
+): Promise<{ status: number; body: unknown }> {
+  try {
+    const res = await fetch(`${STRATEGIST_URL}${subpath}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+    return { status: res.status, body: parsed };
+  } catch {
+    return {
+      status: 503,
+      body: {
+        error: {
+          kind: 'strategist_offline',
+          message: `Strategist service unreachable at ${STRATEGIST_URL}. Start it with "npm run dev" in Strategist/.`,
+        },
+      },
+    };
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -350,6 +394,28 @@ const server = http.createServer(async (req, res) => {
         }
         const result = await bridge.invoke(body.name, (body.params as Record<string, unknown>) ?? {});
         return send(res, 200, { ok: true, result, budgets: bridge.getRateLimitBudgets() });
+      }
+
+      case 'GET /api/strategist/state': {
+        const r = await proxyStrategist('GET', '/state');
+        return send(res, r.status, r.body);
+      }
+
+      case 'POST /api/strategist/run': {
+        const r = await proxyStrategist('POST', '/run');
+        return send(res, r.status, r.body);
+      }
+
+      case 'POST /api/strategist/control': {
+        const body = await readBody(req);
+        const r = await proxyStrategist('POST', '/control', body);
+        return send(res, r.status, r.body);
+      }
+
+      case 'POST /api/strategist/steer': {
+        const body = await readBody(req);
+        const r = await proxyStrategist('POST', '/steer', body);
+        return send(res, r.status, r.body);
       }
 
       default:

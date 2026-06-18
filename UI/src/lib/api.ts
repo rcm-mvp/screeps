@@ -1,6 +1,14 @@
 /** HTTP client for the bridge host. All Screeps calls funnel through invoke(). */
 
-import type { ApiErrorInfo, BridgeStatus, Capability, ConnectForm, RateLimitBudget } from './types';
+import type {
+  ApiErrorInfo,
+  BridgeStatus,
+  Capability,
+  ConnectForm,
+  DeciderKind,
+  RateLimitBudget,
+  StrategistState,
+} from './types';
 
 export class ApiError extends Error {
   readonly info: ApiErrorInfo;
@@ -69,5 +77,15 @@ export const api = {
       body: JSON.stringify({ name, params }),
     });
     return res.result;
+  },
+
+  /** AI strategist (proxied to the optional standalone service). */
+  strategist: {
+    state: () => req<StrategistState>('/api/strategist/state'),
+    run: () => req<StrategistState>('/api/strategist/run', { method: 'POST' }),
+    control: (patch: { dryRun?: boolean; killSwitch?: boolean; decider?: DeciderKind }) =>
+      req<StrategistState>('/api/strategist/control', { method: 'POST', body: JSON.stringify(patch) }),
+    steer: (patch: { shortTerm?: string | null; longTerm?: string | null }) =>
+      req<StrategistState>('/api/strategist/steer', { method: 'POST', body: JSON.stringify(patch) }),
   },
 };
