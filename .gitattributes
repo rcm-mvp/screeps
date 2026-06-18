@@ -1,0 +1,4 @@
+# Keep shell scripts LF so they run on the Linux server regardless of where
+# they were edited (Windows checkouts would otherwise add CRLF and break the
+# shebang with "bad interpreter").
+*.sh text eol=lf
