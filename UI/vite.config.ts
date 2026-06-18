@@ -19,6 +19,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Loopback-only: the dashboard is reached via an SSH tunnel / VS Code port
+    // forwarding, never exposed directly. 127.0.0.1 (not the IPv6-localhost
+    // Vite would otherwise pick) so plain `ssh -L 5173:127.0.0.1:5173` works.
+    host: '127.0.0.1',
     port: 5173,
     proxy: {
       '/api': `http://localhost:${HOST_PORT}`,

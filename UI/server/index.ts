@@ -62,6 +62,10 @@ function loadDotEnv(): void {
 loadDotEnv();
 
 const PORT = Number(process.env.BRIDGE_UI_PORT ?? 4000);
+/** Bind address. Defaults to loopback so this token-bearing host (it can invoke
+ *  any Screeps capability with the account's token) is only reachable via an SSH
+ *  tunnel / localhost. Set BRIDGE_UI_HOST=0.0.0.0 to expose it deliberately. */
+const BIND_HOST = process.env.BRIDGE_UI_HOST ?? '127.0.0.1';
 /** The (optional) external AI strategist service. The UI proxies to it but never
  *  depends on it — the dashboard runs fine with the strategist offline. */
 const STRATEGIST_URL = (process.env.STRATEGIST_URL ?? 'http://localhost:4100').replace(/\/$/, '');
@@ -489,8 +493,8 @@ setInterval(() => {
 /* Boot                                                                 */
 /* ------------------------------------------------------------------ */
 
-server.listen(PORT, () => {
-  console.log(`[bridge-ui host] listening on http://localhost:${PORT}`);
+server.listen(PORT, BIND_HOST, () => {
+  console.log(`[bridge-ui host] listening on http://${BIND_HOST}:${PORT}`);
   if (process.env.SCREEPS_TOKEN) {
     doConnect({})
       .then(() => console.log(`[bridge-ui host] auto-connected as ${account?.username}`))

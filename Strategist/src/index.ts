@@ -96,7 +96,11 @@ async function main(): Promise<void> {
   );
 
   const server = createServer(strategist, logger);
-  server.listen(config.port, () => logger.info(`HTTP API on http://localhost:${config.port}`));
+  // Bind to loopback by default: the control API is reached via the UI proxy
+  // (localhost) or an SSH tunnel, never directly from the internet. Override
+  // with STRATEGIST_HOST=0.0.0.0 to expose it deliberately.
+  const bindHost = process.env.STRATEGIST_HOST ?? '127.0.0.1';
+  server.listen(config.port, bindHost, () => logger.info(`HTTP API on http://${bindHost}:${config.port}`));
 
   const shutdown = () => {
     logger.info('shutting down');
