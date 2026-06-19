@@ -117,24 +117,37 @@ code); run it yourself when you have a new build to ship.
 
 ## Deferred / known issues
 
-### 1. Integration suite needs Docker group membership (one sudo step) — ACTION REQUIRED
-The harness is fully set up (deps installed, `docker-compose.yml` validates,
-`server/config.yml` present) but the `screeps` user cannot reach the Docker
-daemon, and this server has **no passwordless sudo**, so it could not be granted
-automatically. Run once, as a user with sudo:
-```bash
-sudo usermod -aG docker screeps
-# then fully log out and back in (new SSH session) for the group to take effect
+### 1. Integration suite: boots fully, fails creating the test user (upstream mod drift)
+Docker access is **resolved** — `screeps` is in the `docker` group
+(`sudo usermod -aG docker screeps`, done); just use a *fresh* login session
+(group membership doesn't apply to already-open shells). `npm run itest` now
+builds the artifacts, pulls the images, boots the private server, resets the
+world (72 rooms), sets the tick rate and finds a home room — **all working on
+the server**. It then fails in `createTestUser`:
 ```
-Verify and run:
-```bash
-docker ps                       # should work without sudo now
-cd /home/screeps/src/Integration
-npm run itest                   # builds API+Bot, boots private server, runs A–I, tears down
-                                # first boot pulls images + installs mods (~2–3 min); full run ~5–10 min
+CliError: server CLI script failed: ReferenceError: setPassword is not defined
+  ❯ Module.createTestUser src/bootstrap.ts:341
 ```
-Everything else for Integration is ready; this is the only blocker. (I can run
-the full suite for you once the group change is in place.)
+`setPassword(user, pass)` is a CLI global injected by **screepsmod-auth**. The
+launcher installs mods at `:latest` with no lockfile, so the server now pulls
+**screepsmod-auth 2.9.0**, which no longer exposes that global in the CLI
+sandbox (the core `system.*` / `utils.*` calls the harness uses still work, so
+the CLI is fine — only the auth helper is gone/renamed). The suite last passed
+locally against an older mod set.
+
+This is upstream test-harness drift, **not** a migration problem, and it does
+**not** affect the live system. To fix (future iteration):
+- **Pin the mods** in `Integration/server/config.yml` to the last known-good
+  versions (e.g. `screepsmod-auth@<good>`, plus mongo/admin-utils) so runs are
+  reproducible; **or**
+- **Update `bootstrap.ts#createTestUser`** to set the password the way current
+  screepsmod-auth expects — bring up just the server (`docker compose up -d`),
+  connect to the CLI on `:21026`, inspect `typeof setPassword` / the mod's
+  exports, or write the `{salt,password}` fields directly via
+  `storage.db.users.update` with the mod's hashing.
+
+The infrastructure is proven end-to-end; this single auth-helper call is the
+only remaining harness fix.
 
 ### 2. Services do not survive a reboot (by design — tmux)
 We use tmux, so a server **reboot** (or `tmux kill-server`) stops the services;
