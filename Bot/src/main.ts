@@ -17,6 +17,7 @@ import type { SafeDirectives } from './directives';
 import type { ColonyPlan, StrategyPlan } from './contract';
 import { runStrategy } from './strategy';
 import { runDefense } from './managers/defense';
+import { runLinks } from './managers/links';
 import { runLogistics } from './managers/logistics';
 import { runSpawn } from './managers/spawn';
 import { runConstruction } from './managers/construction';
@@ -88,6 +89,9 @@ export const loop = (): void => {
 
     for (const room of ownedRooms()) {
       guard('defense', () => runDefense(room), room.name); // never skipped
+      // Links run before logistics so haulers/upgraders read this tick's link
+      // classification (controllerLink/senderLinks) from the heap.
+      if (!d.paused && !critical) guard('links', () => runLinks(room), room.name);
       if (!d.paused && !critical) guard('logistics', () => runLogistics(room), room.name);
       const cplan = activePlan.colonies[room.name] ?? EMPTY_COLONY_PLAN;
       guard('spawn', () => runSpawn(room, cplan, d, census), room.name);

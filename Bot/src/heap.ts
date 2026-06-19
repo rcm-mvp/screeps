@@ -30,6 +30,15 @@ export interface RoomHeapEntry {
   sink: string | null;
   /** Energy already claimed per pickup id by haulers this tick. */
   claimed: Record<string, number>;
+  /**
+   * Written by the link manager (runs before logistics), read by haulers and
+   * upgraders. `controllerLink` is the controller-adjacent receiver link id
+   * (regardless of fill); upgraders drain it. `senderLinks` are core/source
+   * sender link ids that currently hold energy worth forwarding; haulers top
+   * them up as a delivery tier below spawn/extensions/towers.
+   */
+  controllerLink: string | null;
+  senderLinks: string[];
 }
 
 export interface Heap {
@@ -64,6 +73,8 @@ export function roomHeap(name: string): RoomHeapEntry {
       fillsTower: [],
       sink: null,
       claimed: {},
+      controllerLink: null,
+      senderLinks: [],
     };
     h.rooms[name] = entry;
   }

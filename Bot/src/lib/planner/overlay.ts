@@ -4,7 +4,7 @@
  * type, green-outlined tiles for ramparts, faint dots for roads, and a ring on
  * the anchor. Essential for eyeballing a planner.
  */
-import type { RoomPlan } from './types';
+import type { PlannedStructure, RoomPlan } from './types';
 
 const COLORS: Partial<Record<BuildableStructureConstant, string>> = {
   [STRUCTURE_SPAWN]: '#ff00ff',
@@ -21,6 +21,13 @@ const COLORS: Partial<Record<BuildableStructureConstant, string>> = {
   [STRUCTURE_OBSERVER]: '#80d0ff',
 };
 
+/** Letter drawn on a role-tagged link so the energy network reads at a glance. */
+const LINK_ROLE_GLYPH: Record<NonNullable<PlannedStructure['role']>, string> = {
+  core: 'K',
+  controller: 'C',
+  source: 'S',
+};
+
 export function drawPlan(room: Room, plan: RoomPlan): void {
   const v = room.visual;
   if (!v) return;
@@ -33,6 +40,10 @@ export function drawPlan(room: Room, plan: RoomPlan): void {
       stroke: '#000000',
       strokeWidth: 0.03,
     });
+    // Mark a role-tagged link with its initial: K(ore), C(ontroller), S(ource).
+    if (s.role) {
+      v.text(LINK_ROLE_GLYPH[s.role], s.x, s.y + 0.1, { color: '#000000', font: 0.4, opacity: 0.9 });
+    }
   }
   for (const rp of plan.ramparts) {
     v.rect(rp.x - 0.45, rp.y - 0.45, 0.9, 0.9, { fill: 'transparent', stroke: '#3bff3b', strokeWidth: 0.08, opacity: 0.7 });

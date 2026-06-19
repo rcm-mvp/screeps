@@ -56,6 +56,13 @@ const TYPES: BuildableStructureConstant[] = [
   STRUCTURE_RAMPART,
 ];
 
+/**
+ * Role ↔ index table for the packed wire format (index 0 = no role). Only LINK
+ * structures use a role today; the union mirrors PlannedStructure.role. A missing
+ * 4th packed element decodes to index 0 → undefined role (backward-safe).
+ */
+const ROLES = ['core', 'controller', 'source'] as const;
+
 const packCoord = (x: number, y: number): number => x * 50 + y;
 const unX = (c: number): number => Math.floor(c / 50);
 const unY = (c: number): number => c % 50;
@@ -87,6 +94,57 @@ function bestNeighbour(
     }
   }
   return best;
+}
+
+/**
+ * Tag the bunker link nearest the planned storage as the 'core' hub (the link
+ * network's sender). Picks an existing, still-untagged stamp link by Chebyshev
+ * distance to the STORAGE tile (or the anchor if no storage is planned, which
+ * never happens for a complete plan). Mutates the chosen entry's role in place —
+ * it doesn't move. No-op if no untagged link exists.
+ *
+ * Pins the promoted link's rcl to 5 (when links first unlock): the bunker stamp
+ * links carry rcls [5,5,6,7,8,8], so if geometry makes a higher-rcl link nearest
+ * storage the core endpoint would otherwise wait until that RCL — leaving the
+ * controller link (a receiver) with no sender. The core must exist the moment
+ * links unlock. Over-placement isn't a risk: the per-RCL cap + the [core,
+ * controller, source] ordering still bound how many links actually build.
+ */
+function promoteCoreLink(structures: PlannedStructure[], anchor: { x: number; y: number }): void {
+  const storage = structures.find((s) => s.type === STRUCTURE_STORAGE);
+  const ref = storage ?? anchor;
+  let best: PlannedStructure | null = null;
+  let bestD = Infinity;
+  for (const s of structures) {
+    if (s.type !== STRUCTURE_LINK || s.role) continue; // only untagged stamp links
+    const d = Math.max(Math.abs(s.x - ref.x), Math.abs(s.y - ref.y));
+    if (d < bestD) {
+      bestD = d;
+      best = s;
+    }
+  }
+  if (best) {
+    best.role = 'core';
+    best.rcl = 5; // pin to the RCL links unlock so the sender is never gated behind a higher one
+  }
+}
+
+/**
+ * Reorder the LINK entries in `structures` to [core, controller, source(s),
+ * …untagged surplus] while leaving every non-link entry where it is. nextSites
+ * scans plan.structures in array order up to the per-RCL link cap, so this is
+ * what makes the role-tagged links win the budget before the surplus core links.
+ */
+function reorderLinks(structures: PlannedStructure[]): void {
+  const links = structures.filter((s) => s.type === STRUCTURE_LINK);
+  if (!links.length) return;
+  const rank = (s: PlannedStructure): number =>
+    s.role === 'core' ? 0 : s.role === 'controller' ? 1 : s.role === 'source' ? 2 : 3;
+  links.sort((a, b) => rank(a) - rank(b)); // stable in V8 → source links keep room order
+  let i = 0;
+  for (let j = 0; j < structures.length; j++) {
+    if (structures[j].type === STRUCTURE_LINK) structures[j] = links[i++];
+  }
 }
 
 /** Run the full pipeline. Returns null if no anchor satisfies the constraints. */
@@ -150,6 +208,31 @@ export function computePlan(room: Room): RoomPlan | null {
     }
   }
 
+  // Role-tagged links for the energy network (item A1). The bunker stamp already
+  // placed the 6-link budget inside the core; here we add a controller-adjacent
+  // and per-source link as fresh endpoints, then promote one existing core link
+  // to 'core'. nextSites builds links in array order up to the per-RCL cap, so we
+  // reorder the LINK entries to [core, controller, source(s), …surplus] — that
+  // wins the valuable links the RCL5 cap (2) and RCL6 cap (3) before any surplus.
+  // rcl is pinned to 5 (links unlock there); the cap + ordering, not the tag, is
+  // what limits how many actually get placed.
+  if (room.controller) {
+    const tile = bestNeighbour(room.controller.pos, anchor, terrain, occupied);
+    if (tile) {
+      structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_LINK, rcl: 5, role: 'controller' });
+      occupied.add(packCoord(tile.x, tile.y));
+    }
+  }
+  for (const src of sources) {
+    const tile = bestNeighbour(src.pos, anchor, terrain, occupied);
+    if (tile) {
+      structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_LINK, rcl: 5, role: 'source' });
+      occupied.add(packCoord(tile.x, tile.y));
+    }
+  }
+  promoteCoreLink(structures, anchor);
+  reorderLinks(structures);
+
   // Min-cut ramparts around the footprint dilated by the margin.
   const m = STAMP_RADIUS + SETTINGS.MINCUT_MARGIN;
   const rect = {
@@ -197,7 +280,12 @@ export function encodePlan(plan: RoomPlan): PackedPlan {
     v: plan.v,
     at: plan.at,
     a: packCoord(plan.anchor.x, plan.anchor.y),
-    s: plan.structures.map((s) => [packCoord(s.x, s.y), TYPES.indexOf(s.type), s.rcl] as [number, number, number]),
+    s: plan.structures.map((s) => {
+      // Drop the role element entirely when there isn't one, so unrolled plans
+      // stay 3-tuples and the segment stays small.
+      const ri = s.role ? ROLES.indexOf(s.role) + 1 : 0;
+      return ri ? [packCoord(s.x, s.y), TYPES.indexOf(s.type), s.rcl, ri] : [packCoord(s.x, s.y), TYPES.indexOf(s.type), s.rcl];
+    }),
     r: plan.ramparts.map((p) => packCoord(p.x, p.y)),
     d: plan.roads.map((p) => packCoord(p.x, p.y)),
   };
@@ -208,7 +296,12 @@ export function decodePlan(p: PackedPlan): RoomPlan {
     v: p.v,
     at: p.at,
     anchor: { x: unX(p.a), y: unY(p.a) },
-    structures: p.s.map(([c, ti, rcl]) => ({ x: unX(c), y: unY(c), type: TYPES[ti], rcl })),
+    structures: p.s.map(([c, ti, rcl, ri]) => {
+      const s: PlannedStructure = { x: unX(c), y: unY(c), type: TYPES[ti], rcl };
+      // A missing/zero 4th element means no role (backward-safe for 3-tuples).
+      if (ri) s.role = ROLES[ri - 1];
+      return s;
+    }),
     ramparts: p.r.map((c) => ({ x: unX(c), y: unY(c) })),
     roads: p.d.map((c) => ({ x: unX(c), y: unY(c) })),
   };

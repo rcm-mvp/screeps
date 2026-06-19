@@ -3,6 +3,8 @@
  * ordered so the cheap/sacrificial ones take damage first and MOVE survives
  * longest. Returns [] when the role is unaffordable at this budget.
  */
+import { SETTINGS } from '../settings';
+
 const PART_ORDER: BodyPartConstant[] = [TOUGH, WORK, CARRY, ATTACK, RANGED_ATTACK, HEAL, CLAIM, MOVE];
 
 export function bodyCost(body: BodyPartConstant[]): number {
@@ -27,9 +29,12 @@ export function bodyFor(role: string, energy: number): BodyPartConstant[] {
     case 'harvester':
     case 'upgrader':
     case 'builder':
-      return repeat([WORK, CARRY, MOVE], energy, 6);
+      // A1 (links) seam: once a controller link feeds upgraders, the upgrader
+      // body should shift to WORK-heavy with minimal CARRY and park at the link.
+      // Deferred to A1 — for now all three workers share the balanced segment.
+      return repeat([WORK, CARRY, MOVE], energy, SETTINGS.WORKER_MAX_SEGMENTS);
     case 'hauler':
-      return repeat([CARRY, CARRY, MOVE], energy, 8);
+      return repeat([CARRY, CARRY, MOVE], energy, SETTINGS.HAULER_MAX_SEGMENTS);
     case 'miner': {
       // Static container miner: 5 WORK saturates a source; one MOVE is enough
       // for a creep that walks once and parks.

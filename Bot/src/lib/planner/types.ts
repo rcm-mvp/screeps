@@ -11,6 +11,16 @@ export interface PlannedStructure {
   type: BuildableStructureConstant;
   /** Minimum controller level at which this structure may be placed. */
   rcl: number;
+  /**
+   * Role tag for the energy-link network (item A1). Only LINK structures carry
+   * one today: 'core' (hub near storage), 'controller' (beside the controller),
+   * 'source' (beside a source). Drives both placement order — role-tagged links
+   * come first so they win the per-RCL link cap — and the A1b runtime manager,
+   * which maps a built link back to its role via its plan entry. Left undefined
+   * on every non-link structure. The union is a forward seam: item A2 may later
+   * tag the mineral container/extractor, so keep it easy to extend.
+   */
+  role?: 'core' | 'controller' | 'source';
 }
 
 /** The full, decoded plan for one room (lives in a RawMemory segment). */
@@ -62,8 +72,12 @@ export interface PackedPlan {
   at: number;
   /** Anchor, packed. */
   a: number;
-  /** Structures: [packedCoord, typeIndex, unlockRcl][]. */
-  s: Array<[number, number, number]>;
+  /**
+   * Structures: [packedCoord, typeIndex, unlockRcl, roleIndex?][]. The optional
+   * 4th element indexes the planner's ROLE table (0 = no role); a missing 4th
+   * element decodes as no role, so older 3-tuple plans stay readable.
+   */
+  s: Array<[number, number, number, number?]>;
   /** Rampart coords, packed. */
   r: number[];
   /** Road coords, packed. */

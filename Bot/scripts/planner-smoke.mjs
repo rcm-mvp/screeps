@@ -29,6 +29,17 @@ const STRUCT = {
 };
 for (const [k, v] of Object.entries(STRUCT)) globalThis[`STRUCTURE_${k}`] = v;
 
+// FIND_* ids the computePlan path touches. PathFinder/RoomPosition stay
+// undefined here, so reachability short-circuits true and road planning yields
+// [] — computePlan runs against a plain Room mock with no game runtime.
+globalThis.FIND_SOURCES = 105;
+globalThis.FIND_MINERALS = 117;
+globalThis.FIND_MY_SPAWNS = 112;
+globalThis.FIND_EXIT_TOP = 1;
+globalThis.FIND_EXIT_RIGHT = 3;
+globalThis.FIND_EXIT_BOTTOM = 5;
+globalThis.FIND_EXIT_LEFT = 7;
+
 // Expand a sparse {level:count} schedule to all RCL 0–8 (carry the last value).
 function expand(sparse) {
   const o = {};
@@ -200,6 +211,106 @@ const idx = P.idx;
   // Extensions already at the RCL cap → none queued, even with budget to spare.
   const capped = P.nextSites(plan, ctx({ rcl: 2, countOf: (t) => (t === STRUCTURE_EXTENSION ? 5 : 0) }));
   check('place: per-RCL cap blocks over-placement', capped.every((s) => s.type !== STRUCTURE_EXTENSION));
+}
+
+// === 6. Role-tagged links (energy network, item A1) =========================
+{
+  // A plain Room mock over open terrain. Sources and the controller sit well
+  // clear of the bunker footprint so each keeps open neighbours for a container
+  // + a link. PathFinder/RoomPosition are undefined → reachability is true and
+  // roads come back empty, so computePlan exercises only the stamp + link logic.
+  const sources = [
+    { pos: { x: 5, y: 5 } },
+    { pos: { x: 44, y: 44 } },
+  ];
+  const controller = { pos: { x: 5, y: 44 } };
+  const room = {
+    name: 'W1N1',
+    getTerrain: () => openTerrain,
+    controller,
+    find: (type) => {
+      if (type === FIND_SOURCES) return sources;
+      if (type === FIND_MINERALS) return [];
+      if (type === FIND_MY_SPAWNS) return [];
+      return []; // exits + anything else
+    },
+  };
+
+  const plan = P.computePlan(room);
+  check('links: computePlan produced a plan', !!plan);
+
+  const links = plan ? plan.structures.filter((s) => s.type === STRUCTURE_LINK) : [];
+  const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+  const controllerLinks = links.filter((s) => s.role === 'controller');
+  check(
+    'links: exactly one controller link, adjacent to the controller',
+    controllerLinks.length === 1 && cheb(controllerLinks[0], controller.pos) === 1,
+  );
+
+  const sourceLinks = links.filter((s) => s.role === 'source');
+  check(
+    'links: one source link adjacent to each source',
+    sourceLinks.length === sources.length && sources.every((src) => sourceLinks.some((l) => cheb(l, src.pos) === 1)),
+  );
+
+  const coreLinks = links.filter((s) => s.role === 'core');
+  check('links: exactly one core link', coreLinks.length === 1);
+
+  // Role-tagged links must lead the LINK entries so the per-RCL cap builds them
+  // first: [core, controller, source(s), …surplus untagged bunker links].
+  check('links: core link is the first LINK entry', links.length > 0 && links[0].role === 'core');
+  check('links: controller link is the second LINK entry', links.length > 1 && links[1].role === 'controller');
+  check(
+    'links: untagged surplus links come after the tagged ones',
+    (() => {
+      const firstUntagged = links.findIndex((s) => !s.role);
+      if (firstUntagged === -1) return true; // no surplus is fine
+      return links.slice(0, firstUntagged).every((s) => s.role); // everything before it is tagged
+    })(),
+  );
+
+  // The per-RCL cap + ordering (not the rcl tag) decides which links build first.
+  const ctx = (over = {}) => ({
+    rcl: 5,
+    has: () => false,
+    countOf: () => 0,
+    limitOf: (t, r) => CONTROLLER_STRUCTURES[t]?.[r] ?? 0,
+    budget: 50,
+    ...over,
+  });
+  const onlyLinks = (sites) => sites.filter((s) => s.type === STRUCTURE_LINK);
+
+  const rcl5 = onlyLinks(P.nextSites(plan, ctx({ rcl: 5 })));
+  check('links: RCL5 yields exactly 2 link sites (the cap)', rcl5.length === 2);
+  const tagAt = (site) => {
+    const m = links.find((l) => l.x === site.x && l.y === site.y);
+    return m ? m.role : undefined;
+  };
+  const rcl5Roles = rcl5.map(tagAt);
+  check(
+    'links: RCL5 link sites are the core + controller links',
+    rcl5Roles.includes('core') && rcl5Roles.includes('controller'),
+  );
+
+  const rcl6 = onlyLinks(P.nextSites(plan, ctx({ rcl: 6 })));
+  check('links: RCL6 yields exactly 3 link sites (the cap)', rcl6.length === 3);
+  check(
+    'links: RCL6 adds a source link on top of core + controller',
+    rcl6.map(tagAt).filter((r) => r === 'source').length === 1,
+  );
+
+  // Encode/decode round-trips the role tags (4th packed element, 3-tuple safe).
+  const decoded = P.decodePlan(P.encodePlan(plan));
+  const decodedLinks = decoded.structures.filter((s) => s.type === STRUCTURE_LINK);
+  check(
+    'links: encode/decode preserves link roles',
+    decodedLinks.length === links.length && decodedLinks.every((s, i) => s.role === links[i].role),
+  );
+  check(
+    'links: non-link structures decode with no role',
+    decoded.structures.filter((s) => s.type !== STRUCTURE_LINK).every((s) => s.role === undefined),
+  );
 }
 
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall planner checks passed');

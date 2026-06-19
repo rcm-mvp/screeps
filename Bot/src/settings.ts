@@ -29,6 +29,26 @@ export const SETTINGS = {
   /** energyCapacityAvailable needed before static miners replace harvesters. */
   MINER_CAPACITY_MIN: 550,
   EMERGENCY_BODY_MIN: 200,
+  /** Max [WORK,CARRY,MOVE] segments for harvester/upgrader/builder bodies.
+   *  Raised from 6 (1200e) to 12 so bodies fill RCL5/6 capacity (1800/2300e);
+   *  12 segments cost 2400e, enough to consume RCL6's 2300. Still bounded by the
+   *  energy budget and the 50-part game limit. Revisit at RCL7/8 (capacity
+   *  5600/10000) where much larger bodies become affordable. */
+  WORKER_MAX_SEGMENTS: 12,
+  /** Max [CARRY,CARRY,MOVE] segments for hauler bodies. Raised from 8 (1200e) to
+   *  10 (1500e) so haulers fill RCL5/6 capacity (1800/2300e). Revisit at RCL7/8. */
+  HAULER_MAX_SEGMENTS: 10,
+
+  // Links (energy network — see managers/links.ts)
+  /** A sender link (core/source) only forwards to the controller link once it
+   *  holds at least this much energy. A link's capacity is 800; sending costs a
+   *  flat 3% (24e on a full 800 send) and starts a 1-tick/range cooldown, so
+   *  batching matters. 400 (half capacity) balances throughput against waste:
+   *  large enough that the loss is a small fraction and we don't burn a cooldown
+   *  on a trickle, small enough to keep the controller link — the upgrade
+   *  bottleneck — fed promptly. The API caps the transfer at the receiver's free
+   *  space, so a partially-full controller link still gets topped without spill. */
+  LINK_MIN_SEND: 400,
 
   // Construction
   MAX_SITES_PER_ROOM: 12,
@@ -40,8 +60,11 @@ export const SETTINGS = {
   PLAN_BUCKET: 9000,
   /** RawMemory segment holding the roomName→plan map. 0–99; pick one nobody else uses. */
   PLAN_SEGMENT: 90,
-  /** Layout/schema version. Bump to invalidate every cached plan and force a replan. */
-  PLAN_VERSION: 1,
+  /** Layout/schema version. Bump to invalidate every cached plan and force a replan.
+   *  v2 (A1): packed structures gained a 4th role element and the planner now
+   *  derives role-tagged links (controller/source endpoints + a core hub), so
+   *  every v1 plan must be recomputed. */
+  PLAN_VERSION: 2,
   /** Max construction sites the planner places per room per construction tick. */
   PLACE_PER_TICK: 5,
   /** Hard ceiling on total construction sites the game allows account-wide. */

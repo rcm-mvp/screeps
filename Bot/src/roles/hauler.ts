@@ -74,6 +74,8 @@ function resolvePickup(creep: Creep, rh: RoomHeapEntry): Pickup | null {
 }
 
 function resolveFill(creep: Creep, rh: RoomHeapEntry): AnyStoreStructure | null {
+  // Delivery ladder: spawn/extensions → towers → sender links → storage. The
+  // first two MUST win so links never starve spawning.
   for (const group of [rh.fillsCore, rh.fillsTower]) {
     const targets: AnyStoreStructure[] = [];
     for (const id of group) {
@@ -83,6 +85,19 @@ function resolveFill(creep: Creep, rh: RoomHeapEntry): AnyStoreStructure | null 
     const closest = creep.pos.findClosestByRange(targets);
     if (closest) return closest;
   }
+
+  // Sender links (core/source), filled only after spawn/extensions/towers — this
+  // routes true surplus toward upgrading instead of banking it. Self-regulating:
+  // when the controller link + upgraders are saturated the senders fill up and
+  // stop accepting, so haulers fall through to storage on their own.
+  const linkTargets: StructureLink[] = [];
+  for (const id of rh.senderLinks) {
+    const link = Game.getObjectById(id as Id<StructureLink>);
+    if (link && link.store.getFreeCapacity(RESOURCE_ENERGY) > 0) linkTargets.push(link);
+  }
+  const link = creep.pos.findClosestByRange(linkTargets);
+  if (link) return link;
+
   if (rh.sink) {
     const storage = Game.getObjectById(rh.sink as Id<StructureStorage>);
     if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) return storage;

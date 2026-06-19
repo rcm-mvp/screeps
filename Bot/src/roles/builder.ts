@@ -8,13 +8,24 @@ import { setWorkingArea } from '../lib/traffic';
 import { acquireEnergy, updateWorkingFlag } from '../lib/energy';
 import { atHome } from './common';
 
+// Mirrors TYPE_PRIORITY in lib/planner/plan.ts so builders and the planner agree
+// on the economic ordering. Anything unlisted falls through to the default (14),
+// the lowest tier, just below roads.
 const BUILD_PRIORITY: Partial<Record<StructureConstant, number>> = {
   [STRUCTURE_SPAWN]: 0,
   [STRUCTURE_EXTENSION]: 1,
   [STRUCTURE_TOWER]: 2,
   [STRUCTURE_CONTAINER]: 3,
   [STRUCTURE_STORAGE]: 4,
-  [STRUCTURE_ROAD]: 5,
+  [STRUCTURE_LINK]: 5,
+  [STRUCTURE_TERMINAL]: 6,
+  [STRUCTURE_LAB]: 7,
+  [STRUCTURE_EXTRACTOR]: 8, // forward-looking: not yet in the planner (minerals TBD), ranked with the standalone economy structures
+  [STRUCTURE_FACTORY]: 9,
+  [STRUCTURE_POWER_SPAWN]: 10,
+  [STRUCTURE_NUKER]: 11,
+  [STRUCTURE_OBSERVER]: 12,
+  [STRUCTURE_ROAD]: 13, // lowest tier, just above the implicit default
 };
 
 export function runBuilder(creep: Creep, _ctx: RoleContext): void {
@@ -27,9 +38,9 @@ export function runBuilder(creep: Creep, _ctx: RoleContext): void {
 
   const sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
   if (sites.length) {
-    const best = Math.min(...sites.map((s) => BUILD_PRIORITY[s.structureType] ?? 9));
+    const best = Math.min(...sites.map((s) => BUILD_PRIORITY[s.structureType] ?? 14));
     const target = creep.pos.findClosestByRange(
-      sites.filter((s) => (BUILD_PRIORITY[s.structureType] ?? 9) === best),
+      sites.filter((s) => (BUILD_PRIORITY[s.structureType] ?? 14) === best),
     );
     if (target) {
       setWorkingArea(creep, target.pos, 3); // hold near the site, yield lanes when idle in range

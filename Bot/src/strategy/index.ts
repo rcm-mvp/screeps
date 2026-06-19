@@ -90,6 +90,10 @@ function computeQuotas(room: Room, posture: Posture): Record<string, number> {
   q.miner = minersViable ? sources.length : 0;
   q.harvester = minersViable ? 0 : Math.min(sources.length * 2, 6);
   q.hauler = sourceContainers > 0 ? Math.max(1, sourceContainers) : 0;
+  // Upgrader bodies now scale to room capacity (WORKER_MAX_SEGMENTS), so each
+  // upgrader does much more per tick. Keep the count modest so a few big bodies
+  // don't outrun energy income — bigger bodies already do the heavy lifting, and
+  // the extra upgrader is gated on a large storage buffer that can sustain them.
   q.upgrader = rcl < 2 ? 1 : 2;
   if (room.storage && room.storage.store[RESOURCE_ENERGY] > 100000) q.upgrader += 1;
   q.builder = sites > 0 ? 2 : rcl >= 2 ? 1 : 0;
