@@ -337,8 +337,12 @@ export async function createTestUser(
   // without it /api/auth/signin returns 401. setPassword() RETURNS A PROMISE
   // (the db update) — it must be awaited, or signin races the write. runJson
   // awaits whatever the expression resolves to, so hand it the promise.
+  // screepsmod-auth >=2.9.0 namespaced the CLI helper under `auth.setPassword`
+  // (it was a bare `setPassword` global before); the mod is pulled at
+  // `:latest` with no version pinning, so support both shapes.
   await cli.runJson(
-    `Promise.resolve(setPassword(${JSON.stringify(username)}, ${JSON.stringify(password)}))` +
+    `Promise.resolve((typeof auth !== 'undefined' ? auth.setPassword : setPassword)` +
+      `(${JSON.stringify(username)}, ${JSON.stringify(password)}))` +
       `.then(function () { return 'password-set'; })`,
   );
 

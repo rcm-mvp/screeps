@@ -8,7 +8,14 @@ steamKey: dummy # overridden by the STEAM_KEY env var from docker-compose
 
 mods:
   - screepsmod-mongo
-  - screepsmod-auth
+  # Pinned: screepsmod-auth@2.9.0 added a synchronous users.tokens collection
+  # bootstrap in lib/index.js (`config.mongo.client.db()`) that crashes with
+  # "Cannot read properties of undefined (reading 'db')" when paired with
+  # screepsmod-mongo's client wiring in this launcher — config-manager.js
+  # swallows the exception, so the whole mod (CLI hooks, /api/auth/* routes)
+  # silently never loads. 2.8.3 predates that bootstrap code. Bump once
+  # upstream fixes the ordering (watch screepsmod-auth releases).
+  - screepsmod-auth@2.8.3
   - screepsmod-admin-utils
 
 bots: {}
