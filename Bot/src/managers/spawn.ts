@@ -12,7 +12,7 @@ import { bodyFor, bodyCost } from '../lib/bodies';
 import { log } from '../lib/log';
 import { isKnownRole } from '../roles';
 
-const BASE_PRIORITY = ['harvester', 'miner', 'hauler', 'upgrader', 'builder', 'claimer', 'scout', 'defender'];
+const BASE_PRIORITY = ['harvester', 'miner', 'hauler', 'upgrader', 'builder', 'claimer', 'scout', 'mineralMiner', 'defender'];
 
 export function runSpawn(room: Room, cplan: ColonyPlan, d: SafeDirectives, census: Census): void {
   const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);

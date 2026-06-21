@@ -98,6 +98,15 @@ function computeQuotas(room: Room, posture: Posture): Record<string, number> {
   if (room.storage && room.storage.store[RESOURCE_ENERGY] > 100000) q.upgrader += 1;
   q.builder = sites > 0 ? 2 : rcl >= 2 ? 1 : 0;
   q.defender = posture === 'defend' ? 1 : 0;
+  // Mineral extraction (A2): one static miner on the mineral, but only once it can
+  // actually work — RCL6 (extractor unlock), an extractor actually built on the
+  // mineral, and the mineral not currently depleted (don't spawn into an empty
+  // mineral; it regenerates slowly). Drops to 0 when the mineral runs dry so the
+  // miner isn't replaced mid-depletion.
+  const mineral = room.find(FIND_MINERALS)[0];
+  const extractorBuilt =
+    !!mineral && mineral.pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+  q.mineralMiner = rcl >= 6 && extractorBuilt && mineral.mineralAmount > 0 ? 1 : 0;
   return q;
 }
 

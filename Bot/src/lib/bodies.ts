@@ -45,6 +45,24 @@ export function bodyFor(role: string, energy: number): BodyPartConstant[] {
       body.push(MOVE);
       return body;
     }
+    case 'mineralMiner': {
+      // Static extractor miner: scale WORK to the budget but cap it — minerals
+      // aren't time-critical, so a bigger batch per cooldown isn't worth the
+      // energy. Static (walks once, then parks), so MOVE is minimal: 1 per 5
+      // WORK. Reserve the MOVE cost up front so the body never exceeds budget.
+      const maxWork = SETTINGS.MINERAL_MINER_MAX_WORK;
+      const estimatedMoves = Math.max(1, Math.ceil(maxWork / 5));
+      const works = Math.min(
+        maxWork,
+        Math.floor((energy - BODYPART_COST[MOVE] * estimatedMoves) / BODYPART_COST[WORK]),
+      );
+      if (works < 2) return [];
+      const moves = Math.max(1, Math.ceil(works / 5));
+      const body: BodyPartConstant[] = [];
+      for (let i = 0; i < works; i++) body.push(WORK);
+      for (let i = 0; i < moves; i++) body.push(MOVE);
+      return body;
+    }
     case 'defender':
       return repeat([ATTACK, MOVE], energy, 8);
     case 'claimer':

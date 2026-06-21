@@ -8,6 +8,7 @@ import { runHauler } from './hauler';
 import { runUpgrader } from './upgrader';
 import { runBuilder } from './builder';
 import { runMiner } from './miner';
+import { runMineralMiner } from './mineralMiner';
 import { runDefender } from './defender';
 import { runClaimer } from './claimer';
 import { runScout } from './scout';
@@ -20,6 +21,7 @@ export const ROLE_RUNNERS: Record<string, (creep: Creep, ctx: RoleContext) => vo
   upgrader: runUpgrader,
   builder: runBuilder,
   miner: runMiner,
+  mineralMiner: runMineralMiner,
   defender: runDefender,
   claimer: runClaimer,
   scout: runScout,
