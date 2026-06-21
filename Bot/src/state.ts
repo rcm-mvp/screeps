@@ -12,10 +12,16 @@ import { SETTINGS } from './settings';
 
 /**
  * Executor-side extension of the per-colony state: base-build progress from the
- * planner. Like `cpuBySubsystem`, it's an extra field contract-unaware readers
- * simply ignore — the canonical contract stays frozen.
+ * planner, and the room's mineral stockpile (item A2). Like `cpuBySubsystem`,
+ * these are extra fields contract-unaware readers simply ignore — the canonical
+ * contract stays frozen (no CONTRACT_VERSION bump). `mineral` reports the room's
+ * native mineral type and how much of it sits in storage (the A2 pipeline's
+ * sink); absent until the room actually has a mineral deposit.
  */
-type ExecutorColonyState = ColonyState['colonies'][string] & { basePlan?: BasePlanSummary };
+type ExecutorColonyState = ColonyState['colonies'][string] & {
+  basePlan?: BasePlanSummary;
+  mineral?: { type: MineralConstant; amount: number };
+};
 
 export interface Census {
   total: number;
@@ -62,6 +68,10 @@ export function writeState(census: Census, tickErrors: string[], cpuBySubsystem:
     };
     if (room.storage) colony.storageEnergy = room.storage.store[RESOURCE_ENERGY];
     if (room.memory.plan) colony.basePlan = room.memory.plan.summary;
+    const mineral = room.find(FIND_MINERALS)[0];
+    if (mineral) {
+      colony.mineral = { type: mineral.mineralType, amount: room.storage?.store[mineral.mineralType] ?? 0 };
+    }
     colonies[room.name] = colony;
   }
 

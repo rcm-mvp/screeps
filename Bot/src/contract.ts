@@ -23,6 +23,7 @@ export type RoleName =
   | 'upgrader'
   | 'builder'
   | 'miner'
+  | 'mineralMiner'
   | 'defender'
   | 'claimer'
   | 'scout';
