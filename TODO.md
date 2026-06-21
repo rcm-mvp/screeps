@@ -1,25 +1,43 @@
 # Bot TODO — closing the RCL5→6(→8) gap
 
-## Status (2026-06-19)
+## Status (2026-06-21)
 
-**Done this session (branch `rcl6-economy`, merged to `main`, NOT yet deployed):**
-- ✅ **A1** — link energy network (planner role-tagging + runtime `managers/links.ts`
-  + hauler/upgrader integration). A review caught and fixed an inverted
+**Done previously (commit 2be65d8, merged to `main`, NOT yet deployed):**
+- ✅ **A1** — link energy network. A review caught and fixed an inverted
   `senderLinks` publish filter that would have left the network inert.
 - ✅ **A3** — builder site-priority mirrors the planner.
 - ✅ **A4** — worker/hauler bodies scale to RCL5/6 energy capacity.
-- ✅ Integration harness fixed (auth mod pin + `setPassword` dual-path) and a
-  loop-regression scenario (`scenario-j`) added.
+- ✅ Integration harness fixed + loop-regression scenario (`scenario-j`).
 
-**Validated by** `Bot/ npm run typecheck` + `npm run smoke` (link, planner, traffic,
-and a spawn-priority regression guard all green) and `Integration/ npm run typecheck`
-+ `npm run test:hermetic`.
+**Done this session (commits 6cd3c5d…7200733, branch `rcl6-minerals` merged to
+`main`, NOT yet deployed):**
+- ✅ **A2.1** — planner places `STRUCTURE_EXTRACTOR` on the mineral tile + a
+  mineral container adjacent (roles 'extractor'/'mineral'). `PLAN_VERSION` 2→3.
+- ✅ **A2.2** — `mineralMiner` role (body + RCL6/extractor/mineralAmount-gated
+  quota + spawn priority).
+- ✅ **A2.3** — hauler/logistics generalized to move minerals (container →
+  storage) with energy always winning and no resource-mixing. An independent
+  code-review pass caught + fixed a mineral-load deadlock (a hauler with no
+  storage sink rallied forever, off energy duty) → now drops + pickup is
+  sink-gated.
+- ✅ **A2.4** — `colony.mineral = { type, amount }` surfaced as an executor-side
+  state extension (like `cpuBySubsystem`/`basePlan`). **No contract change / no
+  CONTRACT_VERSION bump** (the only strict Strategist schema validates LLM
+  directive *output*, not incoming state). `scenario-k` added.
+
+**Validated by** `Bot/ npm run typecheck` + `npm run smoke` (91 checks incl. new
+mineral planner/hauler/logistics scenarios, all green) and `Integration/ npm run
+typecheck` + `npm run test:hermetic`.
 
 **STILL TO RUN BEFORE DEPLOY (could not run here — no docker access for this
-user):** `cd Integration && npm run itest` (full A–J suite against the dockerised
-server). This is the end-to-end gate. Then `cd Bot && npm run deploy`.
+user):** `cd Integration && npm run itest` (full A–K suite against the dockerised
+server). End-to-end gate for BOTH the A1/A3/A4 and the A2 waves. Then `cd Bot &&
+npm run deploy`. After deploy: at RCL6, confirm the extractor gets built, a
+`mineralMiner` spawns, and `colony.mineral.amount` starts climbing as minerals
+reach storage.
 
-**Not started (next waves):** A2 (minerals), B1–B3, C1–C5 below — unchanged.
+**Not started (next waves):** B1–B3, C1–C5 below — unchanged. B1 (labs) now has
+its A2 mineral-economy prerequisite in place.
 
 ## Context
 
@@ -76,7 +94,16 @@ Original analysis (kept for reference):
 - **Why now:** this is the single highest-value RCL5 unlock and currently 100%
   dead weight.
 
-### A2. Mineral extraction pipeline is entirely missing
+### A2. Mineral extraction pipeline ✅ DONE
+*(Implemented across A2.1–A2.4: planner extractor + mineral container; a
+`mineralMiner` role gated on RCL6 + extractor + non-empty deposit; hauler/
+logistics generalized to move minerals (container → storage) with energy always
+winning; and `colony.mineral` surfaced in state as a non-breaking executor-side
+extension. A review-caught mineral-load deadlock was fixed. Validated by 91 smoke
+checks + `scenario-k`; live `itest`/deploy still pending.)*
+
+Original analysis (kept for reference):
+
 > **Seams A1 left for this:** `PlannedStructure.role` (in `lib/planner/types.ts`)
 > is a deliberately-extendable union — add `'mineral'`/`'extractor'` roles and
 > tag the extractor + mineral container the same way A1 tags links. The planner's
