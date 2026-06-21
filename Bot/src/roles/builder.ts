@@ -20,7 +20,7 @@ const BUILD_PRIORITY: Partial<Record<StructureConstant, number>> = {
   [STRUCTURE_LINK]: 5,
   [STRUCTURE_TERMINAL]: 6,
   [STRUCTURE_LAB]: 7,
-  [STRUCTURE_EXTRACTOR]: 8, // forward-looking: not yet in the planner (minerals TBD), ranked with the standalone economy structures
+  [STRUCTURE_EXTRACTOR]: 8, // in the planner as of A2 (mineral extractor on the mineral tile), ranked with the standalone economy structures
   [STRUCTURE_FACTORY]: 9,
   [STRUCTURE_POWER_SPAWN]: 10,
   [STRUCTURE_NUKER]: 11,

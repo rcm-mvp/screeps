@@ -12,15 +12,17 @@ export interface PlannedStructure {
   /** Minimum controller level at which this structure may be placed. */
   rcl: number;
   /**
-   * Role tag for the energy-link network (item A1). Only LINK structures carry
-   * one today: 'core' (hub near storage), 'controller' (beside the controller),
-   * 'source' (beside a source). Drives both placement order — role-tagged links
-   * come first so they win the per-RCL link cap — and the A1b runtime manager,
-   * which maps a built link back to its role via its plan entry. Left undefined
-   * on every non-link structure. The union is a forward seam: item A2 may later
-   * tag the mineral container/extractor, so keep it easy to extend.
+   * Role tag for the energy-link network (item A1) and mineral extraction (A2).
+   * LINK structures carry one of 'core' (hub near storage), 'controller' (beside
+   * the controller), 'source' (beside a source); this drives both placement order
+   * — role-tagged links come first so they win the per-RCL link cap — and the A1b
+   * runtime manager, which maps a built link back to its role via its plan entry.
+   * A2 adds 'extractor' (the extractor, which sits ON the mineral tile) and
+   * 'mineral' (the mineral container, adjacent to the mineral); these drive the
+   * future harvest/haul managers (A2.2/A2.3). Left undefined on every other
+   * structure. The union is a forward seam — keep it easy to extend.
    */
-  role?: 'core' | 'controller' | 'source';
+  role?: 'core' | 'controller' | 'source' | 'mineral' | 'extractor';
 }
 
 /** The full, decoded plan for one room (lives in a RawMemory segment). */

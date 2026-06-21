@@ -32,6 +32,7 @@ const TYPE_PRIORITY: BuildableStructureConstant[] = [
   STRUCTURE_LINK,
   STRUCTURE_TERMINAL,
   STRUCTURE_LAB,
+  STRUCTURE_EXTRACTOR,
   STRUCTURE_FACTORY,
   STRUCTURE_POWER_SPAWN,
   STRUCTURE_NUKER,
@@ -54,6 +55,7 @@ const TYPES: BuildableStructureConstant[] = [
   STRUCTURE_OBSERVER,
   STRUCTURE_ROAD,
   STRUCTURE_RAMPART,
+  STRUCTURE_EXTRACTOR, // appended (item A2) to keep existing serialized indices stable
 ];
 
 /**
@@ -61,7 +63,7 @@ const TYPES: BuildableStructureConstant[] = [
  * structures use a role today; the union mirrors PlannedStructure.role. A missing
  * 4th packed element decodes to index 0 → undefined role (backward-safe).
  */
-const ROLES = ['core', 'controller', 'source'] as const;
+const ROLES = ['core', 'controller', 'source', 'mineral', 'extractor'] as const;
 
 const packCoord = (x: number, y: number): number => x * 50 + y;
 const unX = (c: number): number => Math.floor(c / 50);
@@ -232,6 +234,22 @@ export function computePlan(room: Room): RoomPlan | null {
   }
   promoteCoreLink(structures, anchor);
   reorderLinks(structures);
+
+  // Mineral extraction (item A2): the extractor sits ON the mineral tile (a
+  // single fixed-position structure, like the source/controller containers —
+  // not part of the checkerboard stamp), with a container on the best adjacent
+  // tile for the miner to drop into. Both unlock at RCL6 (extractor's RCL); the
+  // per-RCL caps (extractor 1, container 5) bound placement, the tags drive the
+  // future harvest/haul managers (A2.2/A2.3).
+  if (mineral) {
+    structures.push({ x: mineral.pos.x, y: mineral.pos.y, type: STRUCTURE_EXTRACTOR, rcl: 6, role: 'extractor' });
+    occupied.add(packCoord(mineral.pos.x, mineral.pos.y));
+    const tile = bestNeighbour(mineral.pos, anchor, terrain, occupied);
+    if (tile) {
+      structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_CONTAINER, rcl: 6, role: 'mineral' });
+      occupied.add(packCoord(tile.x, tile.y));
+    }
+  }
 
   // Min-cut ramparts around the footprint dilated by the margin.
   const m = STAMP_RADIUS + SETTINGS.MINCUT_MARGIN;

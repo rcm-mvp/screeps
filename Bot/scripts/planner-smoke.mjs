@@ -26,6 +26,7 @@ const STRUCT = {
   OBSERVER: 'observer',
   ROAD: 'road',
   RAMPART: 'rampart',
+  EXTRACTOR: 'extractor',
 };
 for (const [k, v] of Object.entries(STRUCT)) globalThis[`STRUCTURE_${k}`] = v;
 
@@ -62,6 +63,7 @@ globalThis.CONTROLLER_STRUCTURES = {
   powerSpawn: expand({ 0: 0, 8: 1 }),
   nuker: expand({ 0: 0, 8: 1 }),
   observer: expand({ 0: 0, 8: 1 }),
+  extractor: expand({ 0: 0, 6: 1 }),
   container: expand({ 0: 5 }),
   road: expand({ 0: 2500 }),
   rampart: expand({ 0: 0, 2: 2500 }),
@@ -311,6 +313,71 @@ const idx = P.idx;
     'links: non-link structures decode with no role',
     decoded.structures.filter((s) => s.type !== STRUCTURE_LINK).every((s) => s.role === undefined),
   );
+}
+
+// === 7. Mineral extractor + container (item A2.1) ===========================
+{
+  // A Room mock with a mineral well clear of the bunker footprint. One source +
+  // the controller sit clear of both the footprint and the mineral so each keeps
+  // open neighbours. PathFinder/RoomPosition undefined → reachability true, roads
+  // empty; computePlan exercises the mineral block.
+  const mineral = { pos: { x: 44, y: 5 } };
+  const sources = [{ pos: { x: 5, y: 5 } }];
+  const controller = { pos: { x: 5, y: 44 } };
+  const room = {
+    name: 'W1N1',
+    getTerrain: () => openTerrain,
+    controller,
+    find: (type) => {
+      if (type === FIND_MINERALS) return [mineral];
+      if (type === FIND_SOURCES) return sources;
+      if (type === FIND_MY_SPAWNS) return [];
+      return []; // exits + anything else
+    },
+  };
+
+  const plan = P.computePlan(room);
+  check('mineral: computePlan produced a plan', !!plan);
+
+  const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+  const extractors = plan ? plan.structures.filter((s) => s.type === STRUCTURE_EXTRACTOR) : [];
+  check(
+    'mineral: exactly one extractor, on the mineral tile, role+rcl correct',
+    extractors.length === 1 &&
+      extractors[0].x === mineral.pos.x &&
+      extractors[0].y === mineral.pos.y &&
+      extractors[0].role === 'extractor' &&
+      extractors[0].rcl === 6,
+  );
+
+  const minContainers = plan ? plan.structures.filter((s) => s.type === STRUCTURE_CONTAINER && s.role === 'mineral') : [];
+  check(
+    'mineral: exactly one mineral container, adjacent to the mineral, rcl 6',
+    minContainers.length === 1 && cheb(minContainers[0], mineral.pos) === 1 && minContainers[0].rcl === 6,
+  );
+
+  // RCL gating: the extractor unlocks at RCL6 (cap 1), so RCL5 places none. The
+  // extractor sits low in TYPE_PRIORITY (after lab), so the budget must be large
+  // enough to reach its tier past the full RCL6 stamp (40 extensions, etc.).
+  const ctx = (over = {}) => ({
+    rcl: 6,
+    has: () => false,
+    countOf: () => 0,
+    limitOf: (t, r) => CONTROLLER_STRUCTURES[t]?.[r] ?? 0,
+    budget: 1000,
+    ...over,
+  });
+  const onlyExtractors = (sites) => sites.filter((s) => s.type === STRUCTURE_EXTRACTOR);
+  check('mineral: RCL5 yields no extractor site', onlyExtractors(P.nextSites(plan, ctx({ rcl: 5 }))).length === 0);
+  check('mineral: RCL6 yields exactly one extractor site', onlyExtractors(P.nextSites(plan, ctx({ rcl: 6 }))).length === 1);
+
+  // Encode/decode round-trips the extractor + mineral-container role tags.
+  const d = P.decodePlan(P.encodePlan(plan));
+  const dExtractor = d.structures.filter((s) => s.type === STRUCTURE_EXTRACTOR);
+  const dMinContainer = d.structures.filter((s) => s.type === STRUCTURE_CONTAINER && s.role === 'mineral');
+  check('mineral: encode/decode preserves the extractor role', dExtractor.length === 1 && dExtractor[0].role === 'extractor');
+  check('mineral: encode/decode preserves the mineral container role', dMinContainer.length === 1 && dMinContainer[0].role === 'mineral');
 }
 
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall planner checks passed');

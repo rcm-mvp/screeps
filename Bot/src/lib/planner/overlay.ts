@@ -21,11 +21,13 @@ const COLORS: Partial<Record<BuildableStructureConstant, string>> = {
   [STRUCTURE_OBSERVER]: '#80d0ff',
 };
 
-/** Letter drawn on a role-tagged link so the energy network reads at a glance. */
+/** Letter drawn on a role-tagged structure so the network/mineral reads at a glance. */
 const LINK_ROLE_GLYPH: Record<NonNullable<PlannedStructure['role']>, string> = {
   core: 'K',
   controller: 'C',
   source: 'S',
+  mineral: 'M',
+  extractor: 'X',
 };
 
 export function drawPlan(room: Room, plan: RoomPlan): void {
@@ -40,7 +42,8 @@ export function drawPlan(room: Room, plan: RoomPlan): void {
       stroke: '#000000',
       strokeWidth: 0.03,
     });
-    // Mark a role-tagged link with its initial: K(ore), C(ontroller), S(ource).
+    // Mark a role-tagged structure with its initial: K(ore), C(ontroller),
+    // S(ource) links; M(ineral) container; e(X)tractor.
     if (s.role) {
       v.text(LINK_ROLE_GLYPH[s.role], s.x, s.y + 0.1, { color: '#000000', font: 0.4, opacity: 0.9 });
     }

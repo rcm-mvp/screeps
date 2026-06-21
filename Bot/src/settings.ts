@@ -38,6 +38,10 @@ export const SETTINGS = {
   /** Max [CARRY,CARRY,MOVE] segments for hauler bodies. Raised from 8 (1200e) to
    *  10 (1500e) so haulers fill RCL5/6 capacity (1800/2300e). Revisit at RCL7/8. */
   HAULER_MAX_SEGMENTS: 10,
+  /** Max WORK parts on a mineral (extractor) miner. More WORK = a bigger batch per
+   *  EXTRACTOR_COOLDOWN (5t), but minerals aren't time-critical and the container
+   *  holds 2000, so it's capped. 8 WORK harvests 8/5≈1.6 mineral/tick. */
+  MINERAL_MINER_MAX_WORK: 8,
 
   // Links (energy network — see managers/links.ts)
   /** A sender link (core/source) only forwards to the controller link once it
@@ -63,8 +67,10 @@ export const SETTINGS = {
   /** Layout/schema version. Bump to invalidate every cached plan and force a replan.
    *  v2 (A1): packed structures gained a 4th role element and the planner now
    *  derives role-tagged links (controller/source endpoints + a core hub), so
-   *  every v1 plan must be recomputed. */
-  PLAN_VERSION: 2,
+   *  every v1 plan must be recomputed.
+   *  v3 (A2): the planner now places a mineral extractor (on the mineral tile) +
+   *  an adjacent mineral container, so v2 plans must be recomputed. */
+  PLAN_VERSION: 3,
   /** Max construction sites the planner places per room per construction tick. */
   PLACE_PER_TICK: 5,
   /** Hard ceiling on total construction sites the game allows account-wide. */
