@@ -25,27 +25,50 @@ export function runLogistics(room: Room): void {
   const pickups: LogisticsPickup[] = [];
   for (const s of room.find(FIND_STRUCTURES)) {
     if (s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] >= 50) {
-      pickups.push({ id: s.id, amount: s.store[RESOURCE_ENERGY] });
+      pickups.push({ id: s.id, amount: s.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
     }
   }
   for (const res of room.find(FIND_DROPPED_RESOURCES)) {
     if (res.resourceType === RESOURCE_ENERGY && res.amount >= 50) {
-      pickups.push({ id: res.id, amount: res.amount });
+      pickups.push({ id: res.id, amount: res.amount, resourceType: RESOURCE_ENERGY });
     }
   }
   for (const tomb of room.find(FIND_TOMBSTONES)) {
-    if (tomb.store[RESOURCE_ENERGY] > 0) pickups.push({ id: tomb.id, amount: tomb.store[RESOURCE_ENERGY] });
+    if (tomb.store[RESOURCE_ENERGY] > 0)
+      pickups.push({ id: tomb.id, amount: tomb.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
   }
   for (const ruin of room.find(FIND_RUINS)) {
-    if (ruin.store[RESOURCE_ENERGY] > 0) pickups.push({ id: ruin.id, amount: ruin.store[RESOURCE_ENERGY] });
+    if (ruin.store[RESOURCE_ENERGY] > 0)
+      pickups.push({ id: ruin.id, amount: ruin.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
   }
   // Storage doubles as a pickup, but only while something actually needs
   // filling — otherwise haulers would loop storage → storage.
   if (room.storage && room.storage.store[RESOURCE_ENERGY] > 0 && (fillsCore.length || fillsTower.length)) {
-    pickups.push({ id: room.storage.id, amount: room.storage.store[RESOURCE_ENERGY] });
+    pickups.push({ id: room.storage.id, amount: room.storage.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
   }
   rh.pickups = pickups;
   rh.claimed = {};
+
+  // Non-energy pickups (the mineral container A2.1 places + any dropped minerals
+  // from the brief window before that container is built). Hauled to storage only
+  // when no energy pickup is viable — see roles/hauler.ts. Tagged with the actual
+  // resource so the hauler withdraws/transfers the right type.
+  const mineralPickups: LogisticsPickup[] = [];
+  for (const s of room.find(FIND_STRUCTURES)) {
+    if (s.structureType !== STRUCTURE_CONTAINER) continue;
+    if (s.store[RESOURCE_ENERGY] >= 50) continue; // already an energy pickup; one container, one list
+    for (const r in s.store) {
+      if (r === RESOURCE_ENERGY) continue;
+      const amount = s.store[r as ResourceConstant];
+      if (amount >= 50) mineralPickups.push({ id: s.id, amount, resourceType: r as ResourceConstant });
+    }
+  }
+  for (const res of room.find(FIND_DROPPED_RESOURCES)) {
+    if (res.resourceType !== RESOURCE_ENERGY && res.amount >= 50) {
+      mineralPickups.push({ id: res.id, amount: res.amount, resourceType: res.resourceType });
+    }
+  }
+  rh.mineralPickups = mineralPickups;
 }
 
 /**

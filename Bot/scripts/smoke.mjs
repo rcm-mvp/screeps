@@ -42,6 +42,7 @@ const C = {
   STRUCTURE_OBSERVER: 'observer',
   STRUCTURE_EXTRACTOR: 'extractor',
   RESOURCE_ENERGY: 'energy',
+  RESOURCE_HYDROGEN: 'H',
   LINK_CAPACITY: 800,
   FIND_SOURCES: 105,
   FIND_SOURCES_ACTIVE: 104,
@@ -144,6 +145,7 @@ check('survives global reset', Memory.bridge.state.tick === 1003);
     [
       `export { runLinks } from '${join(src, 'managers/links')}';`,
       `export { runHauler } from '${join(src, 'roles/hauler')}';`,
+      `export { runLogistics } from '${join(src, 'managers/logistics')}';`,
       `export { roomHeap, ensureHeap } from '${join(src, 'heap')}';`,
       `export { SETTINGS } from '${join(src, 'settings')}';`,
     ].join('\n'),
@@ -316,6 +318,310 @@ check('survives global reset', Memory.bridge.state.tick === 1003);
     L.runHauler(creep, {});
     check('hauler: prefers spawn/extension over an open sender link (spawn never starves)', transferTarget === spawn);
     check('hauler: did not deliver to the sender link', transferTarget !== senderLink);
+  }
+
+  // A store mock: resource amounts as own-enumerable props (so Object.keys() sees
+  // only resource keys, as in the real game), capacity methods non-enumerable.
+  function makeStore(amounts, capacity) {
+    const store = { ...amounts };
+    const used = (res) =>
+      res === undefined ? Object.values(amounts).reduce((a, b) => a + b, 0) : (amounts[res] ?? 0);
+    Object.defineProperty(store, 'getUsedCapacity', { enumerable: false, value: used });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: (_res) => (capacity ?? 0) - used(),
+    });
+    Object.defineProperty(store, 'getCapacity', { enumerable: false, value: () => capacity ?? 0 });
+    return store;
+  }
+
+  // --- Scenario E (ENERGY REGRESSION — pickup): an empty hauler with BOTH an ----
+  // energy container (rh.pickups) and a mineral container (rh.mineralPickups)
+  // available MUST pick up energy — energy always wins over minerals.
+  freshGame(2004);
+  globalThis.Memory = {};
+  {
+    const energyContainer = {
+      id: 'econ',
+      structureType: STRUCTURE_CONTAINER,
+      pos: { x: 20, y: 20 },
+      store: makeStore({ [RESOURCE_ENERGY]: 500 }, 2000),
+    };
+    const mineralContainer = {
+      id: 'mcon',
+      structureType: STRUCTURE_CONTAINER,
+      pos: { x: 30, y: 30 },
+      store: makeStore({ H: 500 }, 2000),
+    };
+    const byId = { econ: energyContainer, mcon: mineralContainer };
+    Game.getObjectById = (id) => byId[id] ?? null;
+
+    let withdrawnFrom = null;
+    let withdrawnResource = null;
+    const creep = {
+      name: 'HE',
+      memory: { role: 'hauler', home: 'W1N1', working: false },
+      store: makeStore({}, 500),
+      pos: {
+        x: 25,
+        y: 25,
+        roomName: 'W1N1',
+        findClosestByRange: (arr) => (arr && arr.length ? arr[0] : null),
+        inRangeTo: () => true,
+      },
+      room: { name: 'W1N1' },
+      withdraw: (target, resourceType) => {
+        withdrawnFrom = target;
+        withdrawnResource = resourceType;
+        return OK;
+      },
+      pickup: () => OK,
+    };
+    Game.creeps = { HE: creep };
+
+    const rh = L.roomHeap('W1N1');
+    rh.pickups = [{ id: 'econ', amount: 500, resourceType: RESOURCE_ENERGY }];
+    rh.mineralPickups = [{ id: 'mcon', amount: 500, resourceType: 'H' }];
+    rh.claimed = {};
+
+    L.runHauler(creep, {});
+    check('hauler: energy wins — empty hauler withdraws from the energy container', withdrawnFrom === energyContainer);
+    check('hauler: energy wins — withdrew RESOURCE_ENERGY (not the mineral)', withdrawnResource === RESOURCE_ENERGY);
+  }
+
+  // --- Scenario F (MINERAL — pickup): an empty hauler with NO energy pickups but -
+  // a mineral container available withdraws the mineral ('H') from it.
+  freshGame(2005);
+  globalThis.Memory = {};
+  {
+    const mineralContainer = {
+      id: 'mcon',
+      structureType: STRUCTURE_CONTAINER,
+      pos: { x: 30, y: 30 },
+      store: makeStore({ H: 500 }, 2000),
+    };
+    const byId = { mcon: mineralContainer };
+    Game.getObjectById = (id) => byId[id] ?? null;
+
+    let withdrawnFrom = null;
+    let withdrawnResource = null;
+    const creep = {
+      name: 'HM',
+      memory: { role: 'hauler', home: 'W1N1', working: false },
+      store: makeStore({}, 500),
+      pos: {
+        x: 25,
+        y: 25,
+        roomName: 'W1N1',
+        findClosestByRange: (arr) => (arr && arr.length ? arr[0] : null),
+        inRangeTo: () => true,
+      },
+      room: { name: 'W1N1' },
+      withdraw: (target, resourceType) => {
+        withdrawnFrom = target;
+        withdrawnResource = resourceType;
+        return OK;
+      },
+      pickup: () => OK,
+    };
+    Game.creeps = { HM: creep };
+
+    const rh = L.roomHeap('W1N1');
+    rh.pickups = [];
+    rh.mineralPickups = [{ id: 'mcon', amount: 500, resourceType: 'H' }];
+    rh.claimed = {};
+    rh.sink = 'storage1'; // a sink must exist for a mineral trip to be startable (pickup gate)
+
+    L.runHauler(creep, {});
+    check('hauler: with no energy pickup, withdraws from the mineral container', withdrawnFrom === mineralContainer);
+    check("hauler: withdrew the mineral ('H')", withdrawnResource === 'H');
+  }
+
+  // --- Scenario G (MINERAL — deliver): a hauler carrying ONLY a mineral delivers -
+  // it to storage and never targets spawn/extensions/towers/links.
+  freshGame(2006);
+  globalThis.Memory = {};
+  {
+    const storage = {
+      id: 'storage1',
+      structureType: STRUCTURE_STORAGE,
+      pos: { x: 25, y: 25 },
+      store: makeStore({ [RESOURCE_ENERGY]: 0 }, 1000000),
+    };
+    const byId = { storage1: storage };
+    Game.getObjectById = (id) => byId[id] ?? null;
+
+    let transferTarget = null;
+    let transferResource = null;
+    const creep = {
+      name: 'HMD',
+      memory: { role: 'hauler', home: 'W1N1', working: true },
+      store: makeStore({ H: 100 }, 100),
+      pos: {
+        x: 26,
+        y: 25,
+        roomName: 'W1N1',
+        findClosestByRange: (arr) => (arr && arr.length ? arr[0] : null),
+        inRangeTo: () => true,
+      },
+      room: { name: 'W1N1' },
+      transfer: (target, resourceType) => {
+        transferTarget = target;
+        transferResource = resourceType;
+        return OK;
+      },
+    };
+    Game.creeps = { HMD: creep };
+
+    const rh = L.roomHeap('W1N1');
+    // Populate the energy fill ladder too — a mineral load must ignore all of it.
+    rh.fillsCore = ['spawn1'];
+    rh.fillsTower = [];
+    rh.senderLinks = ['sender1'];
+    rh.sink = 'storage1';
+
+    L.runHauler(creep, {});
+    check('hauler: mineral load delivers to storage', transferTarget === storage);
+    check("hauler: transferred the mineral ('H') to storage", transferResource === 'H');
+    check('hauler: mineral load never targets spawn/extensions', transferTarget !== 'spawn1');
+  }
+
+  // --- Scenario H (logistics classification): runLogistics splits an energy ------
+  // container (→ pickups, resourceType 'energy') from a mineral container
+  // (→ mineralPickups, resourceType 'H'); storage is never a mineral source.
+  freshGame(2007);
+  globalThis.Memory = {};
+  {
+    const energyContainer = {
+      id: 'econ',
+      structureType: STRUCTURE_CONTAINER,
+      store: makeStore({ [RESOURCE_ENERGY]: 500 }, 2000),
+    };
+    const mineralContainer = {
+      id: 'mcon',
+      structureType: STRUCTURE_CONTAINER,
+      store: makeStore({ H: 300 }, 2000),
+    };
+    const storage = {
+      id: 'storage1',
+      structureType: STRUCTURE_STORAGE,
+      store: makeStore({ [RESOURCE_ENERGY]: 0 }, 1000000),
+    };
+    const room = {
+      name: 'W1N1',
+      storage,
+      find: (type) => {
+        if (type === FIND_STRUCTURES) return [energyContainer, mineralContainer, storage];
+        if (type === FIND_DROPPED_RESOURCES) return [];
+        if (type === FIND_TOMBSTONES) return [];
+        if (type === FIND_RUINS) return [];
+        if (type === FIND_MY_STRUCTURES) return [];
+        return [];
+      },
+    };
+
+    L.runLogistics(room);
+    const rh = L.roomHeap('W1N1');
+    const econEntry = rh.pickups.find((p) => p.id === 'econ');
+    check('logistics: energy container is in pickups', !!econEntry);
+    check("logistics: energy pickup tagged resourceType 'energy'", econEntry && econEntry.resourceType === RESOURCE_ENERGY);
+    check('logistics: mineral container is NOT in pickups', !rh.pickups.some((p) => p.id === 'mcon'));
+    const mconEntry = rh.mineralPickups.find((p) => p.id === 'mcon');
+    check('logistics: mineral container is in mineralPickups', !!mconEntry);
+    check("logistics: mineral pickup tagged resourceType 'H'", mconEntry && mconEntry.resourceType === 'H');
+    check('logistics: storage is never a mineral source', !rh.mineralPickups.some((p) => p.id === 'storage1'));
+  }
+
+  // --- Scenario I (WEDGE FIX — drop): a hauler carrying ONLY a mineral with no ---
+  // viable storage sink must DROP its load (freeing itself for energy duty) rather
+  // than rally forever and deadlock holding the mineral.
+  freshGame(2008);
+  globalThis.Memory = {};
+  {
+    Game.getObjectById = () => null; // no storage object resolvable
+
+    let dropped = null;
+    let transferCalled = false;
+    let travelCalled = false;
+    const creep = {
+      name: 'HWED',
+      memory: { role: 'hauler', home: 'W1N1', working: true },
+      store: makeStore({ H: 100 }, 100),
+      pos: {
+        x: 26,
+        y: 25,
+        roomName: 'W1N1',
+        findClosestByRange: (arr) => (arr && arr.length ? arr[0] : null),
+        inRangeTo: () => true,
+      },
+      room: { name: 'W1N1' },
+      drop: (resourceType) => {
+        dropped = resourceType;
+        return OK;
+      },
+      transfer: () => {
+        transferCalled = true;
+        return OK;
+      },
+      moveTo: () => {
+        travelCalled = true;
+        return OK;
+      },
+    };
+    Game.creeps = { HWED: creep };
+
+    const rh = L.roomHeap('W1N1');
+    rh.sink = null; // no storage sink → nowhere to put the mineral
+
+    L.runHauler(creep, {});
+    check("hauler: wedge fix — drops the mineral ('H') when there is no storage sink", dropped === 'H');
+    check('hauler: wedge fix — does NOT transfer/travel (frees itself instead of deadlocking)', !transferCalled && !travelCalled);
+  }
+
+  // --- Scenario J (PICKUP GATE): an empty hauler with NO energy pickups and a -----
+  // mineral container available but NO sink must NOT withdraw the mineral (it can't
+  // store it) — it rallies. Contrast with Scenario F where the sink IS set.
+  freshGame(2009);
+  globalThis.Memory = {};
+  {
+    const mineralContainer = {
+      id: 'mcon',
+      structureType: STRUCTURE_CONTAINER,
+      pos: { x: 30, y: 30 },
+      store: makeStore({ H: 500 }, 2000),
+    };
+    const byId = { mcon: mineralContainer };
+    Game.getObjectById = (id) => byId[id] ?? null;
+
+    let withdrawCalled = false;
+    const creep = {
+      name: 'HGATE',
+      memory: { role: 'hauler', home: 'W1N1', working: false },
+      store: makeStore({}, 500),
+      pos: {
+        x: 25,
+        y: 25,
+        roomName: 'W1N1',
+        findClosestByRange: (arr) => (arr && arr.length ? arr[0] : null),
+        inRangeTo: () => true,
+      },
+      room: { name: 'W1N1' },
+      withdraw: () => {
+        withdrawCalled = true;
+        return OK;
+      },
+      pickup: () => OK,
+    };
+    Game.creeps = { HGATE: creep };
+
+    const rh = L.roomHeap('W1N1');
+    rh.pickups = [];
+    rh.mineralPickups = [{ id: 'mcon', amount: 500, resourceType: 'H' }];
+    rh.claimed = {};
+    rh.sink = null; // no sink → mineral pickup is gated off
+
+    L.runHauler(creep, {});
+    check('hauler: pickup gate — does NOT withdraw the mineral when there is no sink to store it', !withdrawCalled);
   }
 }
 

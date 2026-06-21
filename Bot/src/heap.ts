@@ -9,6 +9,7 @@ import type { RoomPlan, PackedPlan } from './lib/planner/types';
 export interface LogisticsPickup {
   id: string;
   amount: number;
+  resourceType: ResourceConstant;
 }
 
 /** Decoded base plan cached on the heap (re-decoded from the segment on reset). */
@@ -30,6 +31,11 @@ export interface RoomHeapEntry {
   sink: string | null;
   /** Energy already claimed per pickup id by haulers this tick. */
   claimed: Record<string, number>;
+  /**
+   * Non-energy pickups (mineral container + dropped minerals) — hauled to
+   * storage only when no energy pickup is viable; energy always wins.
+   */
+  mineralPickups: LogisticsPickup[];
   /**
    * Written by the link manager (runs before logistics), read by haulers and
    * upgraders. `controllerLink` is the controller-adjacent receiver link id
@@ -73,6 +79,7 @@ export function roomHeap(name: string): RoomHeapEntry {
       fillsTower: [],
       sink: null,
       claimed: {},
+      mineralPickups: [],
       controllerLink: null,
       senderLinks: [],
     };
