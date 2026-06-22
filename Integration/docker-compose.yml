@@ -41,8 +41,13 @@ services:
       MONGO_HOST: mongo
       REDIS_HOST: redis
       STEAM_KEY: ${STEAM_KEY:-0000000000000000000000000000000A}
+    # Custom entrypoint shims `yarn` to pin screepsmod-auth@2.8.3 in the
+    # launcher-generated package.json (the launcher can't pin mod versions and
+    # 2.9.0's auth mod breaks signin) — see server/launcher-entrypoint.sh.
+    entrypoint: ["/bin/sh", "/launcher-entrypoint.sh"]
     volumes:
       - ./server/config.yml:/screeps/config.yml
+      - ./server/launcher-entrypoint.sh:/launcher-entrypoint.sh:ro
       - screeps-data:/screeps
     restart: unless-stopped
 

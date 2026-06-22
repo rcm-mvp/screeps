@@ -8,15 +8,23 @@ steamKey: dummy # overridden by the STEAM_KEY env var from docker-compose
 
 mods:
   - screepsmod-mongo
-  # Pinned: screepsmod-auth@2.9.0 added a synchronous users.tokens collection
-  # bootstrap in lib/index.js (`config.mongo.client.db()`) that crashes with
-  # "Cannot read properties of undefined (reading 'db')" when paired with
-  # screepsmod-mongo's client wiring in this launcher — config-manager.js
-  # swallows the exception, so the whole mod (CLI hooks, /api/auth/* routes)
-  # silently never loads. 2.8.3 predates that bootstrap code. Bump once
-  # upstream fixes the ordering (watch screepsmod-auth releases).
-  - screepsmod-auth@2.8.3
+  - screepsmod-auth # PINNED to 2.8.3 — see below + docker-compose entrypoint shim
   - screepsmod-admin-utils
+
+# screepsmod-auth MUST be 2.8.3, but this launcher can't pin a mod version:
+#   - inline `screepsmod-auth@2.8.3` becomes the unresolvable package.json key
+#     `"screepsmod-auth@2.8.3": "*"` → yarn fails → the server crash-loops;
+#   - a config `resolutions:` block is ignored (the launcher always writes its
+#     own default resolutions).
+# So the pin is applied by a `yarn` shim in the compose entrypoint
+# (server/launcher-entrypoint.sh): it rewrites the generated package.json's
+# `"screepsmod-auth": "*"` to `"2.8.3"` just before each install.
+#
+# Why 2.8.3: screepsmod-auth@2.9.0's auth mod fails to register its CLI hooks
+# under this launcher (`setPassword`/`auth` come back undefined, so the harness's
+# bootstrap signin throws "setPassword is not defined", and /api/auth/* never
+# loads). 2.8.3 predates that. Drop the shim once the launcher supports pinning
+# or upstream fixes 2.9.x.
 
 bots: {}
 
