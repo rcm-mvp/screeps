@@ -63,8 +63,22 @@ export function bodyFor(role: string, energy: number): BodyPartConstant[] {
       for (let i = 0; i < moves; i++) body.push(MOVE);
       return body;
     }
-    case 'defender':
-      return repeat([ATTACK, MOVE], energy, 8);
+    case 'defender': {
+      // Balanced melee defender: TOUGH tanks first, ATTACK deals damage, MOVE
+      // keeps it mobile (1 MOVE per non-MOVE part for roadless movement at full
+      // speed). Scales to capacity so RCL5+ can afford a real body instead of
+      // the old fixed [ATTACK,MOVE]×8 that had no tanking and was kited by
+      // ranged attackers. At least [TOUGH,ATTACK,MOVE,MOVE] (320e) to be useful.
+      const seg = [TOUGH, ATTACK, MOVE, MOVE];
+      const segCost = bodyCost(seg);
+      if (energy < segCost) {
+        // Can't afford the balanced body — fall back to the old simple pattern
+        // so low-capacity rooms still get *something*.
+        return repeat([ATTACK, MOVE], energy, 8);
+      }
+      const count = Math.min(4, Math.floor(energy / segCost), Math.floor(50 / seg.length));
+      return repeat(seg, energy, count);
+    }
     case 'claimer':
       return energy >= BODYPART_COST[CLAIM] + BODYPART_COST[MOVE] ? [CLAIM, MOVE] : [];
     case 'scout':

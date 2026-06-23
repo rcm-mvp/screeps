@@ -1,190 +1,49 @@
-# Bot TODO — closing the RCL5→6(→8) gap
+# Bot TODO — outstanding work
 
-## Status (2026-06-21)
+## Status (2026-06-23)
 
-**Done previously (commit 2be65d8, merged to `main`, NOT yet deployed):**
-- ✅ **A1** — link energy network. A review caught and fixed an inverted
-  `senderLinks` publish filter that would have left the network inert.
-- ✅ **A3** — builder site-priority mirrors the planner.
-- ✅ **A4** — worker/hauler bodies scale to RCL5/6 energy capacity.
-- ✅ Integration harness fixed + loop-regression scenario (`scenario-j`).
+Completed items (A1–A4, CR1–CR3, Q1–Q5, RCL2–RCL3) moved to `DONE.md`.
+This file now holds only outstanding work: the remaining RCL 3-4 gaps,
+RCL6 polish items, architecture observations, and parked/minor items.
 
-**Done this session (commits 6cd3c5d…7200733, branch `rcl6-minerals` merged to
-`main`, NOT yet deployed):**
-- ✅ **A2.1** — planner places `STRUCTURE_EXTRACTOR` on the mineral tile + a
-  mineral container adjacent (roles 'extractor'/'mineral'). `PLAN_VERSION` 2→3.
-- ✅ **A2.2** — `mineralMiner` role (body + RCL6/extractor/mineralAmount-gated
-  quota + spawn priority).
-- ✅ **A2.3** — hauler/logistics generalized to move minerals (container →
-  storage) with energy always winning and no resource-mixing. An independent
-  code-review pass caught + fixed a mineral-load deadlock (a hauler with no
-  storage sink rallied forever, off energy duty) → now drops + pickup is
-  sink-gated.
-- ✅ **A2.4** — `colony.mineral = { type, amount }` surfaced as an executor-side
-  state extension (like `cpuBySubsystem`/`basePlan`). **No contract change / no
-  CONTRACT_VERSION bump** (the only strict Strategist schema validates LLM
-  directive *output*, not incoming state). `scenario-k` added.
-
-**Validated by** `Bot/ npm run typecheck` + `npm run smoke` (91 checks incl. new
-mineral planner/hauler/logistics scenarios, all green) and `Integration/ npm run
-typecheck` + `npm run test:hermetic`.
-
-**STILL TO RUN BEFORE DEPLOY (could not run here — no docker access for this
-user):** `cd Integration && npm run itest` (full A–K suite against the dockerised
-server). End-to-end gate for BOTH the A1/A3/A4 and the A2 waves. Then `cd Bot &&
-npm run deploy`. After deploy: at RCL6, confirm the extractor gets built, a
-`mineralMiner` spawns, and `colony.mineral.amount` starts climbing as minerals
-reach storage.
-
-**Not started (next waves):** B1–B3, C1–C5 below — unchanged. B1 (labs) now has
-its A2 mineral-economy prerequisite in place.
-
-## Context
-
-`Bot/README.md` says the bot's baseline (zero directives) self-sustains to
-**~RCL3**, and most of the existing economy code (`roles/miner.ts`,
-`roles/hauler.ts`, `managers/logistics.ts`, `managers/spawn.ts`,
-`lib/bodies.ts`, `managers/construction.ts`) predates the base planner and was
-written/tuned for an RCL1–4 colony. The base planner (`lib/planner/`) plans
-the *full* RCL1–8 bunker layout (it tags every structure with its unlock RCL),
-but several RCL5/6 structures it places have **no operational code behind
-them** — they get built and then sit there doing nothing.
-
-We're at RCL5 now, ~2 days from RCL6. This file is the gap list: each numbered
-item below is meant to be scoped tightly enough to hand to a fresh session as
-its own self-contained prompt later, one problem at a time. Don't batch
-several items into one prompt — they're split for a reason (separate files,
-separate testing, separate review).
-
-Sections are priority-ordered: **A = needed for/around the RCL6 push, B = RCL6
-polish (soon after), C = explicitly parked for RCL7/8 (long way off, do not
-start)**.
+**Before deploy:** run `cd Integration && npm run itest` (full A–K suite
+against the dockerised server), then `cd Bot && npm run deploy`.
 
 ---
 
-## A. Blocking / high-value for RCL5→6
+## RCL. RCL 3-4 gaps (important for current level)
 
-### A1. Link energy network ✅ DONE
-*(Implemented: `PlannedStructure.role` tags links 'core'/'controller'/'source';
-planner derives a controller-adjacent link + per-source links; `managers/links.ts`
-classifies built links onto the heap and forwards sender→controller; haulers fill
-sender links below spawn/tower priority; upgraders drain the controller link.
-`PLAN_VERSION` bumped to 2 → one bucket-gated replan on first deploy.)*
+### RCL1. No remote mining — the single biggest economic gap
+- **Where:** No remote miner / remote hauler role exists.
+  `strategy/index.ts` only counts sources in the owned room.
+- **Problem:** At RCL 3-4, remote mining (harvesting sources in unowned adjacent
+  rooms with a miner + hauler, optionally a reserver) is the **standard way** to
+  double or triple income before having GCL for a second room. A single room
+  with 2 sources caps at ~20 energy/tick. With 2-4 remote mining sites, you
+  could be at 40-60 energy/tick — dramatically speeding up the RCL 5→6 push.
+- **Needed:** New `remoteMiner` role (static miner on a remote source, drops to
+  a container), `remoteHauler` role (container → home storage, multi-room
+  pathing), and strategy logic to pick remote rooms from
+  `Memory.rooms[*].intel` (scout data). Optionally a `reserver` to claim the
+  controller for exclusive source access.
+- **Effort:** Large feature — new roles + strategy + multi-room logistics.
+- **Note:** This is the natural first step toward the task system (see ARCH1)
+  — remote mining as a "role" is painful; as a "job" it's clean. Consider
+  doing ARCH1 first or together with this.
 
-Original analysis (kept for reference):
-- **Where:** `lib/planner/stamp.ts:42` reserves link tiles tagged `{5:2, 6:3,
-  7:4, 8:6}` and `construction.ts` will happily place them once RCL5/6 unlock
-  them. There is **no `managers/links.ts`** — grep for `STRUCTURE_LINK` outside
-  `lib/planner/` returns nothing.
-- **Problem:** as soon as RCL5 lands, the planner places 2 links and they sit
-  full/empty forever — wasted extension-equivalent energy and CPU on placement
-  bookkeeping for structures that do nothing.
-- **Needed:** a tiny manager (`managers/links.ts`, called from `main.ts`
-  per-room per-tick, cheap — link checks are just `store` reads) that:
-  1. Identifies which planned link is the "source" link (nearest a source) vs
-     the "controller" link (nearest the controller) — the stamp only tags
-     unlock RCL today, not a role, so this needs either a runtime
-     nearest-neighbour lookup or a new field on `PlannedStructure`
-     (`lib/planner/types.ts`).
-  2. Transfers source-link → controller-link via `StructureLink#transferEnergy`
-     once the source link has a worthwhile amount and is off cooldown.
-  3. Optionally feeds the controller link's energy to nearby upgraders via the
-     existing `findDeliveryTarget`/`resolveFill` paths (or let upgraders just
-     withdraw from the controller-link directly).
-- **Why now:** this is the single highest-value RCL5 unlock and currently 100%
-  dead weight.
-
-### A2. Mineral extraction pipeline ✅ DONE
-*(Implemented across A2.1–A2.4: planner extractor + mineral container; a
-`mineralMiner` role gated on RCL6 + extractor + non-empty deposit; hauler/
-logistics generalized to move minerals (container → storage) with energy always
-winning; and `colony.mineral` surfaced in state as a non-breaking executor-side
-extension. A review-caught mineral-load deadlock was fixed. Validated by 91 smoke
-checks + `scenario-k`; live `itest`/deploy still pending.)*
-
-Original analysis (kept for reference):
-
-> **Seams A1 left for this:** `PlannedStructure.role` (in `lib/planner/types.ts`)
-> is a deliberately-extendable union — add `'mineral'`/`'extractor'` roles and
-> tag the extractor + mineral container the same way A1 tags links. The planner's
-> special-positioning pattern (derive a structure adjacent to a key tile, mark it
-> `occupied`, append to `structures`) in `lib/planner/plan.ts#computePlan` is the
-> template. The heap-publish pattern in `managers/links.ts` (classify → write ids
-> to `RoomHeapEntry` → consumers read) is the template for a mineral hauler tier.
-
-- **Where:** RCL6 unlocks `STRUCTURE_EXTRACTOR`. Grepping the whole `Bot/src`
-  tree for `extractor`/`mineral` only turns up *pathing* references (the
-  planner makes sure the mineral is reachable) — there is no extractor in the
-  stamp's shopping list (`lib/planner/stamp.ts`), no mineral-harvesting role,
-  and `roles/hauler.ts` / `managers/logistics.ts` are hardcoded to
-  `RESOURCE_ENERGY` only, so even a manually-placed extractor would be useless.
-- **This is a multi-part feature — split into its own follow-on prompts:**
-  1. **Placement:** add `STRUCTURE_EXTRACTOR` to the plan, placed directly on
-     the mineral tile (it's a single fixed-position structure, not part of the
-     checkerboard stamp — same special-case treatment as the source/controller
-     containers in `lib/planner/plan.ts`).
-  2. **Harvesting role:** a creep (new role, or a `miner` variant) parked on
-     the mineral with enough `WORK` to use the extractor when
-     `mineral.mineralAmount > 0` (it regenerates slowly after depletion —
-     don't spawn into an empty mineral).
-  3. **Hauling:** generalize `roles/hauler.ts` / `managers/logistics.ts` (today
-     `Pickup`/`LogisticsPickup` types and every find/withdraw/transfer call
-     assume `RESOURCE_ENERGY`) to move arbitrary resources from a mineral
-     container into storage.
-  4. **Visibility:** report the mineral stockpile in `ColonyState`
-     (`API/src/contract.ts`) the same way `storageEnergy` is today — this is a
-     contract change, bump `CONTRACT_VERSION` (see `Bot/README.md`'s "Contract
-     changes" note).
-- **Why now:** extractor unlocks exactly at RCL6; if this waits, that's fine
-  (minerals aren't economy-critical), but it should be tracked as a known gap
-  rather than rediscovered later.
-
-### A3. Builder site priority ✅ DONE
-*(Implemented: `BUILD_PRIORITY` now mirrors the planner's `TYPE_PRIORITY` —
-link/terminal/lab/extractor rank above roads.)*
-
-Original analysis (kept for reference):
-- **Where:** `roles/builder.ts`'s `BUILD_PRIORITY` table only ranks
-  spawn/extension/tower/container/storage/road; anything else (link, terminal,
-  lab, extractor) falls through to the default priority `9` — the *same* as
-  roads, the lowest tier. Compare to `lib/planner/plan.ts`'s `TYPE_PRIORITY`,
-  which already orders these correctly (link/terminal/lab ranked above roads).
-- **Problem:** if a builder has both a half-built road and a link site open at
-  once, it picks whichever is closer rather than the economically important
-  one.
-- **Fix:** extend `BUILD_PRIORITY` to mirror `TYPE_PRIORITY`'s ordering
-  (link/terminal/lab before road). Small, mechanical, low-risk — good
-  first/warm-up prompt.
-
-### A4. Worker body sizes ✅ DONE
-*(Implemented: `SETTINGS.WORKER_MAX_SEGMENTS=12` / `HAULER_MAX_SEGMENTS=10` so
-bodies fill RCL5/6 capacity; upgrader quota left conservative with a rationale
-comment. A WORK-heavy upgrader parked at the controller link is the next refinement
-— see the seam comment in `lib/bodies.ts`.)*
-
-Original analysis (kept for reference):
-- **Where:** `lib/bodies.ts#bodyFor` → `repeat()` caps `harvester`/`upgrader`/
-  `builder` at `maxSegments = 6` → max 900 energy spent on body, and `hauler`
-  at 8 segments → max 1200 energy — regardless of `energyCapacityAvailable`,
-  which is **1800 at RCL5 and 2300 at RCL6**.
-- **Problem:** `Controller#upgradeController` has **no per-tick energy cap
-  below RCL8** — more `WORK` parts on upgraders directly means faster RCL
-  progress. Capping upgrader bodies at 6×`WORK` leaves RCL5/6 extension
-  capacity unused exactly during the RCL5→6 push, where upgrade speed is the
-  bottleneck.
-- **Needed:** revisit `maxSegments` (or switch to a cap derived from
-  `room.energyCapacityAvailable` / a `SETTINGS` constant) specifically for
-  `upgrader`, and re-check `upgrader` quota math in
-  `strategy/index.ts#computeQuotas` (currently flat 2, +1 only past 100k
-  storage energy) against the bigger body size. Validate CPU cost doesn't
-  regress (bigger creeps run cheaper per energy delivered, but confirm via
-  `cpuBySubsystem`).
-- **Why now:** directly speeds up the thing the user is actively doing
-  (pushing RCL5→6).
+### RCL4. No storage before RCL 4 — surplus energy has no sink
+- **Where:** `roles/hauler.ts` — haulers with full energy and nothing to fill
+  rally idle.
+- **Problem:** Before RCL 4 (storage unlock), source containers fill up, miners
+  waste harvest ticks, and energy is lost. Upgraders help (they pull from
+  containers via `acquireEnergy`), but there's no dedicated "surplus →
+  controller" path.
+- **Fix:** Have haulers dump energy at the controller container, or boost
+  upgrader count when storage is absent.
 
 ---
 
-## B. RCL6 polish (after A lands, before pushing toward RCL7)
+## B. RCL6 polish (after RCL items land, before pushing toward RCL7)
 
 ### B1. No lab / mineral-reaction / boosting logic
 - **Where:** `lib/planner/stamp.ts:47` reserves 3 lab tiles at RCL6; zero
@@ -202,10 +61,82 @@ Original analysis (kept for reference):
   market/terminal offloading.
 
 ### B3. Defender is melee-only
-- **Where:** `roles/defender.ts` + `lib/bodies.ts` only ever build
-  `[ATTACK, MOVE]`. No ranged/heal variant.
-- **Status:** acceptable for now (current threats are weak NPC invaders); flag
-  for hardening once attacks get more serious, no urgency at RCL5/6.
+- **Where:** `roles/defender.ts` + `lib/bodies.ts` — defender body now has
+  TOUGH (Q1 fix) but still no ranged/heal variant.
+- **Status:** acceptable for now (current threats are weak NPC invaders);
+  flag for hardening once attacks get more serious.
+
+---
+
+## ARCH. Architecture observations (longer-term, not RCL-gated)
+
+These are not bugs — they're structural notes from the code review. Tracked
+here so they inform the order of future work, not as immediate action items.
+
+### ARCH1. Roles → task system (do before remote mining)
+- **Where:** `roles/index.ts` — `ROLE_RUNNERS` table maps role string →
+  function. Quotas are role *counts*.
+- **Observation:** The role system is rigid. Adding remote mining means a new
+  role, new quota logic, new body, new runner. A creep can only be one thing
+  (a hauler with nothing to haul can't help build). "I need 3 creeps to harvest
+  source X" and "I need someone to build the extractor" are fundamentally the
+  same problem, but they're handled by completely different code paths.
+- **Recommendation:** A task/job system — the strategy layer emits jobs
+  ("harvest source A", "fill extensions", "build site at (23,17)"), creeps
+  bid on or get assigned jobs based on body + location, and a job scheduler
+  handles priority. This makes remote mining, boosting, market hauling, and
+  multi-room all just new job types instead of new roles. The
+  `roles/index.ts` comment already acknowledges this seam. **Do this before
+  RCL1 (remote mining)** — remote mining as a "role" is painful; as a "job"
+  it's clean.
+
+### ARCH2. State machines for creep behavior
+- **Where:** Every role uses `if (working) ... else ...` flags.
+- **Observation:** Works for simple roles but breaks down fast. A mineral
+  miner that should recycle when depleted needs states: `→MINE →RECYCLE`. A
+  remote hauler that gets attacked needs: `→HAUL →FLEE →HAUL`. A defender that
+  should retreat when low HP needs: `→ATTACK →HEAL →ATTACK`.
+- **Recommendation:** A per-creep state machine (`creep.memory.state = 'mining'
+  | 'recycling' | ...`) with a transition table. More readable, less
+  bug-prone, easier to debug (log `creep.name + state`).
+
+### ARCH3. Dynamic economic modeling in the strategy layer
+- **Where:** `strategy/index.ts#computeQuotas` — mostly static rules.
+- **Observation:** No ROI calculation ("is it worth spending 800 energy on a
+  bigger upgrader body, or bank it for the next RCL?"). No dynamic adjustment
+  (hauler count doesn't respond to "extensions empty for 10 ticks" or
+  "containers overflowing"). No priority queues ("extractor site unbuilt for
+  200 ticks → boost builder count temporarily").
+- **Recommendation:** Track energy income rate, storage delta, construction
+  backlog → adjust quotas dynamically. Make the strategy layer the brain, not
+  a lookup table.
+
+### ARCH4. CPU budgeting, not just measurement
+- **Where:** `main.ts` — `cpuBySubsystem` is measured but not acted on. When
+  bucket is low, entire subsystems are skipped with hard gates.
+- **Observation:** More granular approach: allocate a CPU budget per tick,
+  prioritize work (defense always, then haulers, then builders, then
+  upgraders), skip the *lowest priority work* that tick if over budget — not
+  a whole subsystem.
+- **Recommendation:** Implement before multi-room (more rooms = more CPU
+  pressure).
+
+### ARCH5. Multi-room abstractions are single-room-shaped
+- **Where:** `roomHeap`, `runLogistics`, `computeQuotas` — all per-owned-room.
+- **Observation:** Every multi-room seam is stubbed. When you add a second
+  room, you'll be refactoring these interfaces, not just adding code.
+- **Recommendation:** Design interfaces around "rooms we operate in" (owned +
+  remote + reserved) from the start. Do this alongside RCL1 (remote mining).
+
+### ARCH6. No role unit tests
+- **Where:** `Bot/scripts/smoke.mjs` has role-level smoke tests, but there's
+  no structured unit test framework for roles.
+- **Observation:** A hauler with a mocked heap entry, a mocked creep, and a
+  mocked room would catch bugs like CR1 (storage not a pickup when only links
+  need filling) without needing the full integration harness. Role functions
+  are pure-ish (they take a creep + context and act) — very testable.
+- **Recommendation:** Add a proper unit test framework (vitest) for roles
+  before the next big feature, so regressions are caught early.
 
 ---
 
@@ -220,18 +151,40 @@ Original analysis (kept for reference):
 - **C3. Observer (RCL8)** — would let scouting run without physical scout
   creeps; low value until multi-room expansion is real.
 - **C4. Nuker (RCL8).**
-- **C5. Roles → task queue system** — already called out in
-  `Bot/README.md`'s "Evolving it" section as a deliberate architecture seam
-  (`roles/index.ts`'s runner table → a claim-and-execute scheduler). Not
-  RCL-gated, no urgency; tracked here only for completeness.
+
+---
+
+## M. Minor (track, low priority)
+
+### M1. `acquireEnergy` can compete with miners for source access
+- **Where:** `lib/energy.ts#acquireEnergy` — `allowHarvest` lets
+  upgraders/builders harvest from sources as a last resort.
+- **Problem:** Crowds the source and reduces miner efficiency. At RCL 3-4 with
+  limited source access tiles, this can cause traffic jams.
+- **Fix:** Only allow harvesting from sources with no assigned miner, or gate
+  behind a "no containers have energy" check.
+
+### M2. No market trading
+- **Where:** No `Game.market` usage anywhere in `Bot/src`.
+- **Problem:** At RCL 4+ with storage, selling excess minerals (once A2 lands)
+  or buying cheap energy could help. Not critical at RCL 5, but worth tracking.
+
+### M3. `GENERATE_PIXEL` fires at exactly `bucket === 10000`
+- **Where:** `main.ts` — `Game.cpu.bucket === 10000`.
+- **Problem:** On low-CPU subscriptions (20 CPU), reaching 10000 bucket is rare.
+- **Fix:** Lower the threshold or make it configurable.
 
 ---
 
 ## How to use this file
 
-Each item (A1…C5) is scoped to be its own implementation prompt: it names the
-files involved, the current behavior, and what's missing. When picking one up
-in a fresh session, hand over just that item's text plus a pointer to this
-file and `Bot/README.md`'s architecture section — don't bundle multiple items
-into one prompt, they're independently testable (`npm run smoke` /
+Each item is scoped to be its own implementation prompt: it names the files
+involved, the current behavior, and what's missing. When picking one up in a
+fresh session, hand over just that item's text plus a pointer to this file
+and `Bot/README.md`'s architecture section — don't bundle multiple items into
+one prompt, they're independently testable (`npm run smoke` /
 `npm run typecheck` in `Bot/`).
+
+**Suggested order:** RCL4 (quick win) → ARCH1 + RCL1 (remote mining, the big
+feature) → ARCH3 (dynamic strategy) → B1 (labs) → ARCH4, ARCH5, ARCH6 (as
+multi-room approaches).

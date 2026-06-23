@@ -7,6 +7,7 @@ import { travelTo } from '../lib/movement';
 import { setWorkingArea } from '../lib/traffic';
 import { acquireEnergy, updateWorkingFlag } from '../lib/energy';
 import { atHome } from './common';
+import { rampartRepairThreshold } from '../managers/defense';
 
 // Mirrors TYPE_PRIORITY in lib/planner/plan.ts so builders and the planner agree
 // on the economic ordering. Anything unlisted falls through to the default (14),
@@ -49,11 +50,12 @@ export function runBuilder(creep: Creep, _ctx: RoleContext): void {
     }
   }
 
+  const rampartThreshold = rampartRepairThreshold(creep.room.controller?.level ?? 0);
   const broken = creep.room.find(FIND_STRUCTURES, {
     filter: (s) =>
       s.hits < s.hitsMax * 0.6 &&
       s.structureType !== STRUCTURE_WALL &&
-      (s.structureType !== STRUCTURE_RAMPART || s.hits < 10000),
+      (s.structureType !== STRUCTURE_RAMPART || s.hits < rampartThreshold),
   });
   const repairTarget = creep.pos.findClosestByRange(broken);
   if (repairTarget) {

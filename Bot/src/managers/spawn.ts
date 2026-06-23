@@ -14,6 +14,28 @@ import { isKnownRole } from '../roles';
 
 const BASE_PRIORITY = ['harvester', 'miner', 'hauler', 'upgrader', 'builder', 'claimer', 'scout', 'mineralMiner', 'defender'];
 
+/** Ticks-to-live below which a creep is "dying" and its replacement should
+ *  pre-spawn (RCL2 fix). CREEP_LIFE_TIME is 1500; 10% = 150 ticks — enough
+ *  for the replacement to spawn and reach the work site before the old one
+ *  expires, avoiding a gap in income. */
+const PRE_SPAWN_TTL = 150;
+
+/** Count creeps homed in `roomName` that are dying (ticksToLive < PRE_SPAWN_TTL)
+ *  per role. These don't reduce the census count (they're still alive) but the
+ *  spawn manager treats the quota as unfilled so a replacement spawns early. */
+function dyingByRole(roomName: string): Record<string, number> {
+  const dying: Record<string, number> = {};
+  for (const name in Game.creeps) {
+    const c = Game.creeps[name];
+    if (c.memory.home !== roomName) continue;
+    if (c.ticksToLive !== undefined && c.ticksToLive < PRE_SPAWN_TTL) {
+      const role = c.memory.role ?? 'unknown';
+      dying[role] = (dying[role] ?? 0) + 1;
+    }
+  }
+  return dying;
+}
+
 export function runSpawn(room: Room, cplan: ColonyPlan, d: SafeDirectives, census: Census): void {
   const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
   if (!spawn) return;
@@ -50,8 +72,17 @@ export function runSpawn(room: Room, cplan: ColonyPlan, d: SafeDirectives, censu
   if (rh.hostiles > 0) order = ['defender', ...order.filter((r) => r !== 'defender')];
   for (const role of Object.keys(quotas)) if (!order.includes(role)) order.push(role);
 
+  // Pre-spawn: creeps about to die (ticksToLive < PRE_SPAWN_TTL) trigger their
+  // replacement early so there's no income gap (RCL2 fix).
+  const dying = dyingByRole(room.name);
+
   for (const role of order) {
-    if ((have[role] ?? 0) >= (quotas[role] ?? 0)) continue;
+    const liveCount = have[role] ?? 0;
+    const dyingCount = dying[role] ?? 0;
+    // Quota is filled only if live AND not-dying creeps meet it. A dying creep
+    // still counts toward the census, so we subtract dying from the effective
+    // count to trigger a pre-spawn.
+    if (liveCount - dyingCount >= (quotas[role] ?? 0)) continue;
     if (!isKnownRole(role)) continue; // warned at strategy time
     const result = attemptRole(spawn, room, role, cplan, have);
     // 'wait' blocks lower priorities so they can't starve this role of energy;

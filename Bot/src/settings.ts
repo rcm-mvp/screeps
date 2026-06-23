@@ -87,6 +87,11 @@ export const SETTINGS = {
   TOWER_REPAIR_RESERVE: 500,
   /** Towers don't top structures up beyond this (walls/ramparts excluded anyway). */
   TOWER_REPAIR_MAX_HITS: 100000,
+  /** Ramparts are only repaired below this fraction of their max hits. Scales
+   *  with RCL via rampartRepairThreshold() — at low RCL ramparts are cheap and
+   *  rarely attacked, so the threshold stays low; at RCL5+ it rises so a single
+   *  attack tick can't destroy a rampart that's been deemed "fine". */
+  RAMPART_REPAIR_RCL_THRESHOLDS: { 1: 10000, 2: 10000, 3: 10000, 4: 25000, 5: 50000, 6: 100000, 7: 200000, 8: 300000 } as Record<number, number>,
   /** Safe mode triggers when a spawn drops below this hits fraction with hostiles present. */
   SAFE_MODE_SPAWN_HP: 0.5,
   /** Min ticks between Game.notify mails per room. */

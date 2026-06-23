@@ -89,14 +89,21 @@ function computeQuotas(room: Room, posture: Posture): Record<string, number> {
   const q: Record<string, number> = {};
   q.miner = minersViable ? sources.length : 0;
   q.harvester = minersViable ? 0 : Math.min(sources.length * 2, 6);
-  q.hauler = sourceContainers > 0 ? Math.max(1, sourceContainers) : 0;
+  // Hauler quota: at least 2 per room once containers exist (RCL3 fix). A single
+  // hauler per container can't refill extensions fast enough after a spawn —
+  // filling is bursty and both haulers may be at remote containers when the
+  // spawn completes. Scale up at higher RCL where bodies are bigger but
+  // throughput demands are also higher.
+  q.hauler = sourceContainers > 0 ? Math.max(2, sourceContainers) : 0;
   // Upgrader bodies now scale to room capacity (WORKER_MAX_SEGMENTS), so each
   // upgrader does much more per tick. Keep the count modest so a few big bodies
   // don't outrun energy income — bigger bodies already do the heavy lifting, and
   // the extra upgrader is gated on a large storage buffer that can sustain them.
   q.upgrader = rcl < 2 ? 1 : 2;
   if (room.storage && room.storage.store[RESOURCE_ENERGY] > 100000) q.upgrader += 1;
-  q.builder = sites > 0 ? 2 : rcl >= 2 ? 1 : 0;
+  // Builder quota scales with the construction backlog (Q5 fix). Two builders
+  // can't keep up with 30+ queued sites at RCL5-6; cap at 4 so CPU stays bounded.
+  q.builder = sites > 0 ? Math.min(4, Math.max(2, Math.ceil(sites / 10))) : rcl >= 2 ? 1 : 0;
   q.defender = posture === 'defend' ? 1 : 0;
   // Mineral extraction (A2): one static miner on the mineral, but only once it can
   // actually work — RCL6 (extractor unlock), an extractor actually built on the

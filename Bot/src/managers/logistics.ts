@@ -22,6 +22,18 @@ export function runLogistics(room: Room): void {
   rh.sink =
     room.storage && room.storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0 ? room.storage.id : null;
 
+  // Sender links with free capacity — haulers fill these as a delivery tier
+  // below spawn/extensions/towers (see roles/hauler.ts#resolveFill). Storage
+  // must be advertised as a pickup when these need filling too, or haulers
+  // rally idle while the link network starves (CR1 fix). Use the sender list
+  // that runLinks already published this tick (it runs before logistics in
+  // main.ts) — it correctly excludes the controller/receiver link, which
+  // haulers never fill and which is almost always draining (= has free
+  // capacity). A raw STRUCTURE_LINK find would catch the controller link and
+  // advertise storage as a pickup in the normal steady state, causing haulers
+  // to withdraw from storage with nowhere valid to deliver → storage→storage loop.
+  const senderLinksNeedFill = rh.senderLinks.length > 0;
+
   const pickups: LogisticsPickup[] = [];
   for (const s of room.find(FIND_STRUCTURES)) {
     if (s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] >= 50) {
@@ -42,8 +54,11 @@ export function runLogistics(room: Room): void {
       pickups.push({ id: ruin.id, amount: ruin.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
   }
   // Storage doubles as a pickup, but only while something actually needs
-  // filling — otherwise haulers would loop storage → storage.
-  if (room.storage && room.storage.store[RESOURCE_ENERGY] > 0 && (fillsCore.length || fillsTower.length)) {
+  // filling — otherwise haulers would loop storage → storage. Include sender
+  // links (CR1): when spawns/towers are full but links need energy, haulers
+  // must still pull from storage to feed the link network.
+  const anyDeliveryNeeds = fillsCore.length || fillsTower.length || senderLinksNeedFill;
+  if (room.storage && room.storage.store[RESOURCE_ENERGY] > 0 && anyDeliveryNeeds) {
     pickups.push({ id: room.storage.id, amount: room.storage.store[RESOURCE_ENERGY], resourceType: RESOURCE_ENERGY });
   }
   rh.pickups = pickups;

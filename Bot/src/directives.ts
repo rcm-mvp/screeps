@@ -18,7 +18,7 @@ export interface SafeDirectives {
 }
 
 const POSTURES: readonly Posture[] = ['economy', 'expand', 'defend', 'war'];
-const ROOM_NAME_RE = /^[WE]\d{1,2}[NS]\d{1,2}$/;
+const ROOM_NAME_RE = /^[WE]\d+[NS]\d+$/;
 
 export function defaultDirectives(): SafeDirectives {
   return {

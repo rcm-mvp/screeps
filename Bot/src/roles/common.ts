@@ -1,5 +1,6 @@
 /** Helpers shared across roles. */
 import { travelTo, travelToRoom } from '../lib/movement';
+import { roomHeap } from '../heap';
 
 /** True if the creep is in its home room; otherwise walks it home. */
 export function atHome(creep: Creep): boolean {
@@ -45,8 +46,32 @@ export function assignedSource(creep: Creep, exclusive: boolean): Source | null 
   return best;
 }
 
-/** Where a harvester drops its load: spawn/extensions, then towers, then storage. */
+/** Where a harvester drops its load: spawn/extensions, then towers, then
+ *  storage. Reads from the logistics heap snapshot (Q4 fix — avoids
+ *  duplicating room.find() calls every tick that runLogistics already did). */
 export function findDeliveryTarget(creep: Creep): AnyStoreStructure | null {
+  const rh = roomHeap(creep.room.name);
+  // The heap entry is valid for the current tick (logistics runs before
+  // creeps). If it's stale (e.g. logistics was skipped due to bucket critical),
+  // fall back to the direct find.
+  if (rh.tick === Game.time) {
+    for (const group of [rh.fillsCore, rh.fillsTower]) {
+      const targets: AnyStoreStructure[] = [];
+      for (const id of group) {
+        const s = Game.getObjectById(id as Id<AnyStoreStructure>);
+        if (s && (s.store.getFreeCapacity(RESOURCE_ENERGY) ?? 0) > 0) targets.push(s);
+      }
+      const closest = creep.pos.findClosestByRange(targets);
+      if (closest) return closest;
+    }
+    if (rh.sink) {
+      const storage = Game.getObjectById(rh.sink as Id<StructureStorage>);
+      if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) return storage;
+    }
+    return null;
+  }
+
+  // Fallback: direct find (logistics didn't run this tick).
   const room = creep.room;
   const core = room.find(FIND_MY_STRUCTURES, {
     filter: (s) =>

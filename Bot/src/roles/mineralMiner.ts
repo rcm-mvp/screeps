@@ -20,6 +20,15 @@ export function runMineralMiner(creep: Creep, _ctx: RoleContext): void {
     return;
   }
 
+  // Mineral depleted — recycle so the creep isn't replaced (the strategy
+  // layer drops the quota to 0 when mineralAmount === 0). Suicide frees the
+  // creep immediately instead of idling for ~30,000 ticks until regeneration.
+  if (mineral.mineralAmount === 0) {
+    creep.say('mineral empty');
+    creep.suicide();
+    return;
+  }
+
   const container = mineral.pos.findInRange(FIND_STRUCTURES, 1, {
     filter: (s) => s.structureType === STRUCTURE_CONTAINER,
   })[0] as StructureContainer | undefined;

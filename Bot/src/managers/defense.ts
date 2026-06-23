@@ -8,6 +8,18 @@ import { SETTINGS } from '../settings';
 import { roomHeap } from '../heap';
 import { log } from '../lib/log';
 
+/** RCL-scaled rampart repair threshold (CR3). Falls back to the next lower
+ *  defined RCL so an unexpected RCL (e.g. 0) still gets a sane value. */
+export function rampartRepairThreshold(rcl: number): number {
+  const table = SETTINGS.RAMPART_REPAIR_RCL_THRESHOLDS;
+  let best = 10000;
+  for (const key of Object.keys(table)) {
+    const k = Number(key);
+    if (k <= rcl && table[k] > best) best = table[k];
+  }
+  return best;
+}
+
 export function runDefense(room: Room): void {
   const rh = roomHeap(room.name);
   const hostiles = room.find(FIND_HOSTILE_CREEPS);
@@ -35,12 +47,13 @@ export function runDefense(room: Room): void {
         }
       }
       if (tower.store[RESOURCE_ENERGY] > SETTINGS.TOWER_REPAIR_RESERVE) {
+        const rampartThreshold = rampartRepairThreshold(room.controller?.level ?? 0);
         const broken = room.find(FIND_STRUCTURES, {
           filter: (s) =>
             s.hits < s.hitsMax * 0.5 &&
             s.hits < SETTINGS.TOWER_REPAIR_MAX_HITS &&
             s.structureType !== STRUCTURE_WALL &&
-            (s.structureType !== STRUCTURE_RAMPART || s.hits < 10000),
+            (s.structureType !== STRUCTURE_RAMPART || s.hits < rampartThreshold),
         });
         const target = tower.pos.findClosestByRange(broken);
         if (target) tower.repair(target);

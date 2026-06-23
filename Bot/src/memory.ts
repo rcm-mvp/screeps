@@ -63,8 +63,21 @@ export function cleanCreepMemory(): void {
  */
 export function adoptCreeps(): void {
   for (const name in Game.creeps) {
-    const mem = Game.creeps[name].memory;
-    if (!mem.home) mem.home = Game.creeps[name].room.name;
-    if (!mem.role) mem.role = 'upgrader';
+    const creep = Game.creeps[name];
+    const mem = creep.memory;
+    if (!mem.home) mem.home = creep.room.name;
+    if (!mem.role) {
+      // Assign a role compatible with the creep's body so it does useful work
+      // instead of silently failing (e.g. a pure hauler can't upgrade).
+      const body = creep.body;
+      const hasWork = body.some((p) => p.type === WORK);
+      const hasCarry = body.some((p) => p.type === CARRY);
+      const hasAttack = body.some((p) => p.type === ATTACK);
+      const hasRanged = body.some((p) => p.type === RANGED_ATTACK);
+      if (hasAttack || hasRanged) mem.role = 'defender';
+      else if (hasCarry && !hasWork) mem.role = 'hauler';
+      else if (hasWork && hasCarry) mem.role = 'upgrader';
+      else mem.role = 'upgrader'; // safe default — WORK-only or unknown
+    }
   }
 }

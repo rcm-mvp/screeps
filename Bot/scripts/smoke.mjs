@@ -57,6 +57,7 @@ const C = {
   FIND_HOSTILE_STRUCTURES: 109,
   FIND_TOMBSTONES: 118,
   FIND_RUINS: 123,
+  FIND_MINERALS: 301,
   LOOK_STRUCTURES: 'structure',
   LOOK_CONSTRUCTION_SITES: 'constructionSite',
   TERRAIN_MASK_WALL: 1,
@@ -622,6 +623,286 @@ check('survives global reset', Memory.bridge.state.tick === 1003);
 
     L.runHauler(creep, {});
     check('hauler: pickup gate — does NOT withdraw the mineral when there is no sink to store it', !withdrawCalled);
+  }
+
+  // === CR1: storage is a pickup when SENDER links need filling ====================
+  // When spawns/towers are full but sender links have free capacity, storage
+  // must still be advertised as a pickup so haulers feed the link network.
+  // Logistics reads rh.senderLinks (published by runLinks earlier in the tick),
+  // NOT a raw STRUCTURE_LINK find — the latter would also catch the controller
+  // (receiver) link, which is almost always draining (= has free capacity) and
+  // which haulers never fill, advertising storage as a pickup in the normal
+  // steady state and looping haulers storage→storage. The negative case below
+  // guards that regression.
+  {
+    const dir2 = mkdtempSync(join(tmpdir(), 'cr1-'));
+    const entry2 = join(dir2, 'entry.ts');
+    const src2 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry2,
+      [
+        `export { runLogistics } from '${join(src2, 'managers/logistics')}';`,
+        `export { roomHeap, ensureHeap } from '${join(src2, 'heap')}';`,
+      ].join('\n'),
+    );
+    const out2 = join(dir2, 'entry.cjs');
+    await build({ entryPoints: [entry2], outfile: out2, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const CR = require(out2);
+
+    const storage = {
+      id: 'storage1',
+      structureType: STRUCTURE_STORAGE,
+      store: makeStore({ [RESOURCE_ENERGY]: 5000 }, 1000000),
+    };
+    // No spawns/towers need energy; the only delivery demand comes from links.
+    const room = {
+      name: 'W1N1',
+      storage,
+      find: (type) => {
+        if (type === FIND_STRUCTURES) return [storage];
+        if (type === FIND_MY_STRUCTURES) return []; // no spawn/ext/tower needs fill
+        if (type === FIND_DROPPED_RESOURCES) return [];
+        if (type === FIND_TOMBSTONES) return [];
+        if (type === FIND_RUINS) return [];
+        return [];
+      },
+    };
+
+    // Positive: a SENDER link needs filling → storage must be a pickup.
+    freshGame(2100);
+    globalThis.Memory = {};
+    CR.roomHeap('W1N1').senderLinks = ['sender1']; // published by runLinks earlier in the tick
+    CR.runLogistics(room);
+    const rhPos = CR.roomHeap('W1N1');
+    check(
+      'CR1: storage is a pickup when a sender link needs filling (spawns/towers full)',
+      !!rhPos.pickups.find((p) => p.id === 'storage1'),
+    );
+
+    // Negative (regression guard): no sender links need filling (only the
+    // controller link drains) → storage must NOT be a pickup, or haulers loop
+    // storage→storage.
+    freshGame(2101);
+    globalThis.Memory = {};
+    CR.roomHeap('W1N1').senderLinks = []; // controller link draining is not a hauler job
+    CR.runLogistics(room);
+    const rhNeg = CR.roomHeap('W1N1');
+    check(
+      'CR1: storage is NOT a pickup when no sender link needs filling (no storage→storage loop)',
+      !rhNeg.pickups.find((p) => p.id === 'storage1'),
+    );
+  }
+
+  // === CR3: rampart repair threshold scales with RCL =============================
+  {
+    const dir3 = mkdtempSync(join(tmpdir(), 'cr3-'));
+    const entry3 = join(dir3, 'entry3.ts');
+    const src3 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry3,
+      [
+        `export { rampartRepairThreshold } from '${join(src3, 'managers/defense')}';`,
+      ].join('\n'),
+    );
+    const out3 = join(dir3, 'entry3.cjs');
+    await build({ entryPoints: [entry3], outfile: out3, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const CR3 = require(out3);
+
+    const t1 = CR3.rampartRepairThreshold(1);
+    const t5 = CR3.rampartRepairThreshold(5);
+    const t6 = CR3.rampartRepairThreshold(6);
+    check('CR3: RCL1 rampart threshold is 10000', t1 === 10000);
+    check('CR3: RCL5 rampart threshold is 50000', t5 === 50000);
+    check('CR3: RCL6 rampart threshold is 100000', t6 === 100000);
+    check('CR3: threshold increases with RCL (5 < 6)', t5 < t6);
+  }
+
+  // === Q1: defender body has TOUGH parts ==========================================
+  {
+    const dir4 = mkdtempSync(join(tmpdir(), 'q1-'));
+    const entry4 = join(dir4, 'entry4.ts');
+    const src4 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry4,
+      [
+        `export { bodyFor, bodyCost } from '${join(src4, 'lib/bodies')}';`,
+      ].join('\n'),
+    );
+    const out4 = join(dir4, 'entry4.cjs');
+    await build({ entryPoints: [entry4], outfile: out4, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const Q1 = require(out4);
+
+    const body = Q1.bodyFor('defender', 1800); // RCL5 capacity
+    check('Q1: defender body is not empty at 1800 energy', body.length > 0);
+    check('Q1: defender body includes TOUGH', body.includes('tough'));
+    check('Q1: defender body includes ATTACK', body.includes('attack'));
+    check('Q1: defender body includes MOVE', body.includes('move'));
+    // At 1800 energy, [TOUGH,ATTACK,MOVE,MOVE] costs 240 per segment → 4 segments = 960
+    // Should have at least 2 segments worth of parts
+    check('Q1: defender body has enough parts for a real body (>= 8)', body.length >= 8);
+
+    // Low energy fallback: at 200 energy, should still get [ATTACK,MOVE]
+    const lowBody = Q1.bodyFor('defender', 200);
+    check('Q1: defender body at 200e falls back to [ATTACK,MOVE]', lowBody.includes('attack') && lowBody.includes('move'));
+  }
+
+  // === RCL3+Q5: hauler and builder quotas ========================================
+  {
+    const dir5 = mkdtempSync(join(tmpdir(), 'rcl3q5-'));
+    const entry5 = join(dir5, 'entry5.ts');
+    const src5 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry5,
+      [
+        `export { bodyFor, bodyCost } from '${join(src5, 'lib/bodies')}';`,
+      ].join('\n'),
+    );
+    const out5 = join(dir5, 'entry5.cjs');
+    await build({ entryPoints: [entry5], outfile: out5, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    // We can't easily test computeQuotas without a full Room mock, but we can
+    // verify the body generation is correct. The quota logic is tested via
+    // the integration scenarios. Here we just verify body scaling.
+    const Q5 = require(out5);
+
+    // Hauler body at RCL5 (1800 capacity): [CARRY,CARRY,MOVE] = 150/seg, max 10 segs
+    const haulerBody = Q5.bodyFor('hauler', 1800);
+    check('RCL3: hauler body at 1800e has CARRY parts', haulerBody.includes('carry'));
+    check('RCL3: hauler body at 1800e has MOVE parts', haulerBody.includes('move'));
+    // 10 segments × 3 parts = 30 parts max
+    check('RCL3: hauler body at 1800e is reasonably sized (>= 6 parts)', haulerBody.length >= 6);
+  }
+
+  // === Q2: mineral miner recycles on depletion ===================================
+  {
+    const dir6 = mkdtempSync(join(tmpdir(), 'q2-'));
+    const entry6 = join(dir6, 'entry6.ts');
+    const src6 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry6,
+      [
+        `export { runMineralMiner } from '${join(src6, 'roles/mineralMiner')}';`,
+        `export { roomHeap, ensureHeap } from '${join(src6, 'heap')}';`,
+      ].join('\n'),
+    );
+    const out6 = join(dir6, 'entry6.cjs');
+    await build({ entryPoints: [entry6], outfile: out6, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const Q2 = require(out6);
+
+    freshGame(2200);
+    globalThis.Memory = {};
+
+    let suicided = false;
+    const mineral = {
+      id: 'min1',
+      mineralType: 'H',
+      mineralAmount: 0, // depleted!
+      pos: { x: 10, y: 40, findInRange: () => [] },
+    };
+    const creep = {
+      name: 'MM1',
+      memory: { role: 'mineralMiner', home: 'W1N1' },
+      pos: { x: 10, y: 41, roomName: 'W1N1', inRangeTo: () => true, isEqualTo: () => false },
+      room: {
+        name: 'W1N1',
+        find: (type) => (type === FIND_MINERALS ? [mineral] : []),
+      },
+      suicide: () => { suicided = true; return OK; },
+      say: () => OK,
+      harvest: () => OK,
+      moveTo: () => OK,
+    };
+    Game.creeps = { MM1: creep };
+
+    Q2.runMineralMiner(creep, {});
+    check('Q2: mineral miner suicides when mineral is depleted (amount=0)', suicided);
+  }
+
+  // === Q3: adopted creep role checks body ========================================
+  {
+    const dir7 = mkdtempSync(join(tmpdir(), 'q3-'));
+    const entry7 = join(dir7, 'entry7.ts');
+    const src7 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry7,
+      [
+        `export { adoptCreeps } from '${join(src7, 'memory')}';`,
+      ].join('\n'),
+    );
+    const out7 = join(dir7, 'entry7.cjs');
+    await build({ entryPoints: [entry7], outfile: out7, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const Q3 = require(out7);
+
+    freshGame(2300);
+    globalThis.Memory = { creeps: {} };
+
+    // A hauler-body creep (CARRY+MOVE, no WORK) should get 'hauler', not 'upgrader'
+    const haulerCreep = {
+      name: 'adopted_hauler',
+      memory: { home: 'W1N1' }, // no role
+      room: { name: 'W1N1' },
+      body: [{ type: CARRY }, { type: CARRY }, { type: MOVE }],
+    };
+    // A worker-body creep (WORK+CARRY+MOVE) should get 'upgrader'
+    const workerCreep = {
+      name: 'adopted_worker',
+      memory: { home: 'W1N1' },
+      room: { name: 'W1N1' },
+      body: [{ type: WORK }, { type: CARRY }, { type: MOVE }],
+    };
+    // An attack-body creep should get 'defender'
+    const attackCreep = {
+      name: 'adopted_attacker',
+      memory: { home: 'W1N1' },
+      room: { name: 'W1N1' },
+      body: [{ type: ATTACK }, { type: MOVE }],
+    };
+    Game.creeps = { adopted_hauler: haulerCreep, adopted_worker: workerCreep, adopted_attacker: attackCreep };
+    Memory.creeps = {
+      adopted_hauler: haulerCreep.memory,
+      adopted_worker: workerCreep.memory,
+      adopted_attacker: attackCreep.memory,
+    };
+
+    Q3.adoptCreeps();
+    check('Q3: hauler-body creep gets hauler role', Memory.creeps.adopted_hauler.role === 'hauler');
+    check('Q3: worker-body creep gets upgrader role', Memory.creeps.adopted_worker.role === 'upgrader');
+    check('Q3: attack-body creep gets defender role', Memory.creeps.adopted_attacker.role === 'defender');
+  }
+
+  // === CR2: room name regex accepts 3-digit coordinates ==========================
+  {
+    const dir8 = mkdtempSync(join(tmpdir(), 'cr2-'));
+    const entry8 = join(dir8, 'entry8.ts');
+    const src8 = join(process.cwd(), 'src');
+    writeFileSync(
+      entry8,
+      [
+        `export { readDirectives } from '${join(src8, 'directives')}';`,
+      ].join('\n'),
+    );
+    const out8 = join(dir8, 'entry8.cjs');
+    await build({ entryPoints: [entry8], outfile: out8, bundle: true, format: 'cjs', platform: 'node', logLevel: 'error' });
+    const CR2 = require(out8);
+
+    freshGame(2400);
+    globalThis.Memory = {};
+
+    // A room name with 3-digit coordinates should be accepted
+    Memory.bridge = {
+      directives: { targetRooms: ['W123N45'], rev: 1 },
+    };
+    const d = CR2.readDirectives();
+    check('CR2: 3-digit room name W123N45 is accepted', d.targetRooms.includes('W123N45'));
+
+    // A 1-digit room name should still work
+    Memory.bridge.directives = { targetRooms: ['W1N1'], rev: 2 };
+    const d2 = CR2.readDirectives();
+    check('CR2: 1-digit room name W1N1 still accepted', d2.targetRooms.includes('W1N1'));
+
+    // An invalid room name should still be rejected
+    Memory.bridge.directives = { targetRooms: ['not-a-room'], rev: 3 };
+    const d3 = CR2.readDirectives();
+    check('CR2: invalid room name still rejected', !d3.targetRooms.includes('not-a-room'));
   }
 }
 
