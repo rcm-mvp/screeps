@@ -1,0 +1,737 @@
+{
+  "_note": "Pulled from screeps.com via Bot/scripts/fetch-room-fixture.mjs. Do not hand-edit; re-run the script to refresh. See fixtures/README.md.",
+  "room": "W52S13",
+  "shard": "shard3",
+  "sources": [
+    {
+      "x": 18,
+      "y": 3
+    },
+    {
+      "x": 33,
+      "y": 30
+    }
+  ],
+  "controller": {
+    "x": 5,
+    "y": 37
+  },
+  "mineral": {
+    "x": 21,
+    "y": 47,
+    "mineralType": "H"
+  },
+  "structures": [
+    {
+      "type": "constructedWall",
+      "x": 10,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 11,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 12,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 13,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 14,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 22,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 23,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 24,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 25,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 26,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 27,
+      "y": 2
+    },
+    {
+      "type": "constructedWall",
+      "x": 27,
+      "y": 6
+    },
+    {
+      "type": "constructedWall",
+      "x": 27,
+      "y": 7
+    },
+    {
+      "type": "constructedWall",
+      "x": 27,
+      "y": 11
+    },
+    {
+      "type": "constructedWall",
+      "x": 27,
+      "y": 12
+    },
+    {
+      "type": "constructedWall",
+      "x": 13,
+      "y": 18
+    },
+    {
+      "type": "container",
+      "x": 17,
+      "y": 4
+    },
+    {
+      "type": "container",
+      "x": 34,
+      "y": 29
+    },
+    {
+      "type": "container",
+      "x": 35,
+      "y": 30
+    },
+    {
+      "type": "extension",
+      "x": 10,
+      "y": 22
+    },
+    {
+      "type": "extension",
+      "x": 12,
+      "y": 22
+    },
+    {
+      "type": "extension",
+      "x": 9,
+      "y": 23
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 23
+    },
+    {
+      "type": "extension",
+      "x": 13,
+      "y": 23
+    },
+    {
+      "type": "extension",
+      "x": 15,
+      "y": 23
+    },
+    {
+      "type": "extension",
+      "x": 10,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 12,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 13,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 14,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 16,
+      "y": 24
+    },
+    {
+      "type": "extension",
+      "x": 9,
+      "y": 25
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 25
+    },
+    {
+      "type": "extension",
+      "x": 15,
+      "y": 25
+    },
+    {
+      "type": "extension",
+      "x": 10,
+      "y": 26
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 26
+    },
+    {
+      "type": "extension",
+      "x": 16,
+      "y": 26
+    },
+    {
+      "type": "extension",
+      "x": 9,
+      "y": 27
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 27
+    },
+    {
+      "type": "extension",
+      "x": 15,
+      "y": 27
+    },
+    {
+      "type": "extension",
+      "x": 10,
+      "y": 28
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 28
+    },
+    {
+      "type": "extension",
+      "x": 12,
+      "y": 28
+    },
+    {
+      "type": "extension",
+      "x": 13,
+      "y": 28
+    },
+    {
+      "type": "extension",
+      "x": 16,
+      "y": 28
+    },
+    {
+      "type": "extension",
+      "x": 9,
+      "y": 29
+    },
+    {
+      "type": "extension",
+      "x": 11,
+      "y": 29
+    },
+    {
+      "type": "extension",
+      "x": 13,
+      "y": 29
+    },
+    {
+      "type": "extension",
+      "x": 10,
+      "y": 30
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 5
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 6
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 7
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 27,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 28,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 29,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 30,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 31,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 32,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 33,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 34,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 35,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 36,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 37,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 38,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 39,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 40,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 41,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 42,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 43,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 45,
+      "y": 8
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 21,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 22,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 23,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 24,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 25,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 26,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 27,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 46,
+      "y": 9
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 10
+    },
+    {
+      "type": "road",
+      "x": 20,
+      "y": 10
+    },
+    {
+      "type": "road",
+      "x": 47,
+      "y": 10
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 11
+    },
+    {
+      "type": "road",
+      "x": 19,
+      "y": 11
+    },
+    {
+      "type": "road",
+      "x": 47,
+      "y": 11
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 12
+    },
+    {
+      "type": "road",
+      "x": 18,
+      "y": 12
+    },
+    {
+      "type": "road",
+      "x": 46,
+      "y": 12
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 13
+    },
+    {
+      "type": "road",
+      "x": 45,
+      "y": 13
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 14
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 14
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 15
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 15
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 16
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 16
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 17
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 17
+    },
+    {
+      "type": "road",
+      "x": 17,
+      "y": 18
+    },
+    {
+      "type": "road",
+      "x": 44,
+      "y": 18
+    },
+    {
+      "type": "road",
+      "x": 16,
+      "y": 19
+    },
+    {
+      "type": "road",
+      "x": 43,
+      "y": 19
+    },
+    {
+      "type": "road",
+      "x": 16,
+      "y": 20
+    },
+    {
+      "type": "road",
+      "x": 42,
+      "y": 20
+    },
+    {
+      "type": "road",
+      "x": 16,
+      "y": 21
+    },
+    {
+      "type": "road",
+      "x": 41,
+      "y": 21
+    },
+    {
+      "type": "road",
+      "x": 16,
+      "y": 22
+    },
+    {
+      "type": "road",
+      "x": 40,
+      "y": 22
+    },
+    {
+      "type": "road",
+      "x": 16,
+      "y": 23
+    },
+    {
+      "type": "road",
+      "x": 39,
+      "y": 23
+    },
+    {
+      "type": "road",
+      "x": 15,
+      "y": 24
+    },
+    {
+      "type": "road",
+      "x": 38,
+      "y": 24
+    },
+    {
+      "type": "road",
+      "x": 14,
+      "y": 25
+    },
+    {
+      "type": "road",
+      "x": 37,
+      "y": 25
+    },
+    {
+      "type": "road",
+      "x": 36,
+      "y": 26
+    },
+    {
+      "type": "road",
+      "x": 14,
+      "y": 27
+    },
+    {
+      "type": "road",
+      "x": 35,
+      "y": 27
+    },
+    {
+      "type": "road",
+      "x": 15,
+      "y": 28
+    },
+    {
+      "type": "road",
+      "x": 34,
+      "y": 28
+    },
+    {
+      "type": "road",
+      "x": 14,
+      "y": 29
+    },
+    {
+      "type": "road",
+      "x": 13,
+      "y": 30
+    },
+    {
+      "type": "road",
+      "x": 12,
+      "y": 31
+    },
+    {
+      "type": "road",
+      "x": 11,
+      "y": 32
+    },
+    {
+      "type": "road",
+      "x": 4,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 5,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 6,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 7,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 8,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 9,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 10,
+      "y": 33
+    },
+    {
+      "type": "road",
+      "x": 3,
+      "y": 34
+    },
+    {
+      "type": "road",
+      "x": 2,
+      "y": 35
+    },
+    {
+      "type": "road",
+      "x": 2,
+      "y": 36
+    },
+    {
+      "type": "road",
+      "x": 3,
+      "y": 37
+    },
+    {
+      "type": "road",
+      "x": 4,
+      "y": 38
+    },
+    {
+      "type": "spawn",
+      "x": 13,
+      "y": 26
+    },
+    {
+      "type": "storage",
+      "x": 15,
+      "y": 26
+    },
+    {
+      "type": "tower",
+      "x": 14,
+      "y": 28
+    },
+    {
+      "type": "tower",
+      "x": 15,
+      "y": 29
+    }
+  ],
+  "spawns": [
+    {
+      "x": 13,
+      "y": 26
+    }
+  ]
+}

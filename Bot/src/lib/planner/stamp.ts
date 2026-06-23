@@ -115,9 +115,29 @@ export function bunkerRoads(ax: number, ay: number, structures: PlannedStructure
 }
 
 /**
+ * True if a SINGLE tile is valid for a structure: in bounds (x,y in 2..47, a
+ * 2-tile margin for the rampart ring + the room edge), off natural walls, and
+ * clear of `blocked` tiles (sources/controller/mineral + adjacency). This is the
+ * per-tile primitive both `stampFits` (all-or-nothing) and the adaptive fitter
+ * (per-fragment placement) build on.
+ */
+export function tileFits(
+  x: number,
+  y: number,
+  terrain: TerrainLike,
+  blocked: (x: number, y: number) => boolean,
+): boolean {
+  if (x < 2 || x > 47 || y < 2 || y > 47) return false;
+  if (terrain.get(x, y) === TERRAIN_MASK_WALL) return false;
+  if (blocked(x, y)) return false;
+  return true;
+}
+
+/**
  * True if the whole bunker can be placed at (ax, ay): every tile in bounds
  * (with a 2-tile margin for the rampart ring + the room edge), off natural
  * walls, and clear of `blocked` tiles (sources/controller/mineral + adjacency).
+ * All-or-nothing over the full stamp — a single failing tile rejects the anchor.
  */
 export function stampFits(
   ax: number,
@@ -126,9 +146,63 @@ export function stampFits(
   blocked: (x: number, y: number) => boolean,
 ): boolean {
   for (const s of bunkerStructures(ax, ay)) {
-    if (s.x < 2 || s.x > 47 || s.y < 2 || s.y > 47) return false;
-    if (terrain.get(s.x, s.y) === TERRAIN_MASK_WALL) return false;
-    if (blocked(s.x, s.y)) return false;
+    if (!tileFits(s.x, s.y, terrain, blocked)) return false;
   }
   return true;
+}
+
+/**
+ * Dependency-aware coupling tiers (STAMP.md §4d). The adaptive fitter places
+ * each fragment as a unit, splitting only along low-coupling seams. Ordered by
+ * coupling strength: labs (tightest) → core → extensions (loosest).
+ */
+export type CouplingTier = 'labs' | 'core' | 'extensions';
+
+/**
+ * A group of structures the fitter places together. Pure data — no terrain, no
+ * placement. `maxSpread` is the Chebyshev compactness budget the fitter should
+ * respect for the cluster; `splittable` says whether the fragment may be broken
+ * into sub-blocks (only extensions, the lowest-coupling tier).
+ */
+export interface Fragment {
+  tier: CouplingTier;
+  specs: Spec[];
+  /** Compactness hint: max Chebyshev radius the fitter should spread this cluster over. */
+  maxSpread: number;
+  /** Whether the fitter may break this fragment into smaller sub-blocks. */
+  splittable: boolean;
+}
+
+/**
+ * Partition the same shopping list `shoppingList()` produces into dependency-aware
+ * fragments (STAMP.md §4d). Pure data, derived from `SHOPPING`, so it always
+ * covers exactly the bunker's structure set — every spec lands in exactly one
+ * fragment, with no duplicates or omissions.
+ *
+ * Tiers & maxSpread rationale:
+ * - `labs` — labs must stay within RUN_REACTION range (≤2 tiles) of the input
+ *   labs, so the whole cluster has to be tight. `maxSpread: 2` (one cluster,
+ *   never split): the 10-lab block fits inside a 5×5 (radius-2) pocket.
+ * - `core` — spawns, storage, terminal, factory, power_spawn, towers, nuker,
+ *   observer, and links: the logistics hub. Keep compact for hauler/link reach
+ *   and tower coverage. `maxSpread: 3` (a 7×7 pocket comfortably holds the
+ *   ~24 checkerboard core tiles); never split.
+ * - `extensions` — the most splittable tier; haulers fill them so mild spread is
+ *   fine and distributing in blocks lets the fitter use open pockets. `maxSpread: 6`
+ *   (room for several extension blocks around the core); `splittable: true`.
+ */
+export function bunkerFragments(): Fragment[] {
+  const labs: Spec[] = [];
+  const core: Spec[] = [];
+  const extensions: Spec[] = [];
+  for (const spec of SHOPPING) {
+    if (spec.type === STRUCTURE_LAB) labs.push(spec);
+    else if (spec.type === STRUCTURE_EXTENSION) extensions.push(spec);
+    else core.push(spec); // spawns, storage, terminal, factory, power_spawn, towers, nuker, observer, links
+  }
+  return [
+    { tier: 'labs', specs: labs, maxSpread: 2, splittable: false },
+    { tier: 'core', specs: core, maxSpread: 3, splittable: false },
+    { tier: 'extensions', specs: extensions, maxSpread: 6, splittable: true },
+  ];
 }

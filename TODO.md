@@ -176,6 +176,56 @@ here so they inform the order of future work, not as immediate action items.
 
 ---
 
+## UI. UI feature requests
+
+### UI1. Room plan overlay + server-side recalculation in the map view
+- **Where:** `UI/src/panels/MapPanel.tsx` (world map), `UI/src/components/RoomCanvas.tsx`
+  (per-room renderer), `UI/src/panels/MemoryPanel.tsx` (raw memory browser).
+  No plan-related code exists in the UI today.
+- **Want:**
+  1. **Read the room plan from memory.** The bot stores a `PlanPointer` at
+     `Memory.rooms[roomName].plan` (`Bot/src/lib/planner/types.ts#PlanPointer`)
+     — a `{ v, seg, summary }` where `summary` is a `BasePlanSummary`
+     (`anchor`, `rcl`, `built`, `planned`, `ramparts`, `roads`, `pct`). The
+     full decoded `RoomPlan` (`structures: PlannedStructure[]`,
+     `ramparts`, `roads`, `anchor`) lives in the RawMemory segment id `seg`
+     and is decoded by `decodePlan` (`Bot/src/lib/planner/plan.ts`). The UI
+     should fetch this (via the existing memory bridge / a new read endpoint)
+     for each owned room and hold it in the store.
+  2. **Toggle the plan overlay in the map view.** Add a toggle in `MapPanel`
+     (per-room or global) that, when on, overlays the plan's structures,
+     ramparts, and roads on the `RoomCanvas` at their `(x,y)` tiles —
+     semi-transparent so live objects still show through. Color by structure
+     type (reuse `NEUTRAL_TYPES` in `RoomCanvas.tsx`), draw the anchor, and
+     dim tiles not yet built (compare against live room objects to mark
+     built vs pending). This is a pure render feature — no writes.
+  3. **Recalculate the room server-side.** Add a button (in `MapPanel`'s
+     room popover or `RoomPanel`) "Recalculate plan" that calls a new
+     server-side endpoint which runs the planner (`computePlan` /
+     `planRoom` in `Bot/src/lib/planner/plan.ts`) for that room and writes
+     the result back to `Memory.rooms[roomName].plan` + the RawMemory
+     segment. Today `planRoom` only runs in-game (`managers/construction.ts`);
+     exposing it through the API bridge (`API/src/`) as an RPC method (e.g.
+     `room.recalcPlan`) needs a new endpoint that invokes the planner against
+     the live room snapshot and persists the result. Surface success/failure
+     and the new `summary.pct` back to the UI.
+- **Effort:** Medium-large. (1) is a memory read + a store slice; (2) is a
+  `RoomCanvas` overlay layer + a `MapPanel` toggle; (3) is a new API bridge
+  endpoint wrapping the planner + a UI button. Do (1)+(2) first as a
+  read-only feature, then (3).
+- **Notes:**
+  - The plan is per-owned-room; remote/Intel rooms have no plan. Gate the
+    toggle to rooms where `Memory.rooms[name].plan` exists.
+  - `PLAN_VERSION` (`Bot/src/lib/planner/plan.ts`) bumps invalidate cached
+    plans — the recalc endpoint should respect the same version check.
+  - The planner needs terrain + structures for the room; the server-side
+    endpoint must fetch a fresh room snapshot before running `computePlan`.
+  - Consider reusing the existing memory-segment read path (the bridge
+    already reads RawMemory segments for `MemoryPanel`) to fetch the packed
+    plan, then `decodePlan` it client-side — avoids a new endpoint for (1).
+
+---
+
 ## How to use this file
 
 Each item is scoped to be its own implementation prompt: it names the files

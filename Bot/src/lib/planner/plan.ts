@@ -16,6 +16,7 @@ import { selectAnchor } from './anchor';
 import { STAMP_RADIUS, bunkerStructures, bunkerRoads, stampFits } from './stamp';
 import { minCutRamparts } from './mincut';
 import { planRoads } from './roads';
+import { fitStructures } from './fit';
 import type { RoomPlan, PackedPlan, PlannedStructure, BasePlanSummary } from './types';
 
 /** Ramparts go up as soon as they unlock (defense); roads wait for surplus. */
@@ -190,19 +191,51 @@ export function computePlan(room: Room): RoomPlan | null {
   if (!anchor) {
     anchor = selectAnchor({ openness, terrain, keyPositions, reachable }, { minClearance: Math.max(3, SETTINGS.EXIT_MARGIN) });
   }
-  if (!anchor) return null;
 
-  // Stamp + derived containers.
-  const structures = bunkerStructures(anchor.x, anchor.y);
+  // Structure placement (STAMP.md §3, two-tier): the rigid bunker stamp when it
+  // fits (open rooms / greenfield); else the adaptive fitter (closed rooms or a
+  // legacy-built base too tight for the stamp). Both produce the same shape, so
+  // the derived containers/links/extractor + ramparts + roads below are shared.
+  let structures: PlannedStructure[];
+  if (anchor) {
+    structures = bunkerStructures(anchor.x, anchor.y);
+  } else {
+    const existing = room
+      .find(FIND_STRUCTURES)
+      .filter((s) => s.structureType !== STRUCTURE_RAMPART) // ramparts coexist with structures — not occupancy
+      .map((s) => ({ x: s.pos.x, y: s.pos.y, type: s.structureType as BuildableStructureConstant }));
+    const fit = fitStructures({
+      terrain,
+      openness,
+      spawn: spawn ? { x: spawn.pos.x, y: spawn.pos.y } : null,
+      existing,
+      sources: sources.map((s) => ({ x: s.pos.x, y: s.pos.y })),
+      controller: room.controller ? { x: room.controller.pos.x, y: room.controller.pos.y } : null,
+      mineral: mineral ? { x: mineral.pos.x, y: mineral.pos.y } : null,
+      storagePos: room.storage ? { x: room.storage.pos.x, y: room.storage.pos.y } : null,
+    });
+    if (!fit) return null;
+    anchor = fit.anchor;
+    structures = fit.structures;
+  }
+  if (!anchor) return null; // set in both branches above — narrows for the type checker
   const occupied = new Set(structures.map((s) => packCoord(s.x, s.y)));
+
+  // Don't derive a structure the (legacy-built) base already provides, so the
+  // fitter path doesn't duplicate existing containers/links/extractor.
+  const hasNear = (type: BuildableStructureConstant, pos: { x: number; y: number }, range: number): boolean =>
+    structures.some((s) => s.type === type && Math.max(Math.abs(s.x - pos.x), Math.abs(s.y - pos.y)) <= range);
+
+  // Derived source/controller containers (skip where one already exists).
   for (const src of sources) {
+    if (hasNear(STRUCTURE_CONTAINER, src.pos, 1)) continue;
     const tile = bestNeighbour(src.pos, anchor, terrain, occupied);
     if (tile) {
       structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_CONTAINER, rcl: 2 });
       occupied.add(packCoord(tile.x, tile.y));
     }
   }
-  if (room.controller) {
+  if (room.controller && !hasNear(STRUCTURE_CONTAINER, room.controller.pos, 1)) {
     const tile = bestNeighbour(room.controller.pos, anchor, terrain, occupied);
     if (tile) {
       structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_CONTAINER, rcl: 3 });
@@ -218,7 +251,7 @@ export function computePlan(room: Room): RoomPlan | null {
   // wins the valuable links the RCL5 cap (2) and RCL6 cap (3) before any surplus.
   // rcl is pinned to 5 (links unlock there); the cap + ordering, not the tag, is
   // what limits how many actually get placed.
-  if (room.controller) {
+  if (room.controller && !hasNear(STRUCTURE_LINK, room.controller.pos, 1)) {
     const tile = bestNeighbour(room.controller.pos, anchor, terrain, occupied);
     if (tile) {
       structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_LINK, rcl: 5, role: 'controller' });
@@ -226,6 +259,7 @@ export function computePlan(room: Room): RoomPlan | null {
     }
   }
   for (const src of sources) {
+    if (hasNear(STRUCTURE_LINK, src.pos, 1)) continue;
     const tile = bestNeighbour(src.pos, anchor, terrain, occupied);
     if (tile) {
       structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_LINK, rcl: 5, role: 'source' });
@@ -242,22 +276,42 @@ export function computePlan(room: Room): RoomPlan | null {
   // per-RCL caps (extractor 1, container 5) bound placement, the tags drive the
   // future harvest/haul managers (A2.2/A2.3).
   if (mineral) {
-    structures.push({ x: mineral.pos.x, y: mineral.pos.y, type: STRUCTURE_EXTRACTOR, rcl: 6, role: 'extractor' });
-    occupied.add(packCoord(mineral.pos.x, mineral.pos.y));
-    const tile = bestNeighbour(mineral.pos, anchor, terrain, occupied);
-    if (tile) {
-      structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_CONTAINER, rcl: 6, role: 'mineral' });
-      occupied.add(packCoord(tile.x, tile.y));
+    if (!hasNear(STRUCTURE_EXTRACTOR, mineral.pos, 0)) {
+      structures.push({ x: mineral.pos.x, y: mineral.pos.y, type: STRUCTURE_EXTRACTOR, rcl: 6, role: 'extractor' });
+      occupied.add(packCoord(mineral.pos.x, mineral.pos.y));
+    }
+    if (!hasNear(STRUCTURE_CONTAINER, mineral.pos, 1)) {
+      const tile = bestNeighbour(mineral.pos, anchor, terrain, occupied);
+      if (tile) {
+        structures.push({ x: tile.x, y: tile.y, type: STRUCTURE_CONTAINER, rcl: 6, role: 'mineral' });
+        occupied.add(packCoord(tile.x, tile.y));
+      }
     }
   }
 
-  // Min-cut ramparts around the footprint dilated by the margin.
-  const m = STAMP_RADIUS + SETTINGS.MINCUT_MARGIN;
+  // Min-cut ramparts. Protect the dense base cluster (structures within
+  // CLUSTER_RADIUS of the anchor) dilated by the margin — NOT the remote source/
+  // controller/mineral containers + links, which sit far outside and would
+  // balloon the rampart ring (they're intentionally unprotected, as in the stamp
+  // path). The bbox keeps the fitter's adaptive footprint covered too.
+  const CLUSTER_RADIUS = STAMP_RADIUS + 5;
+  let bx1 = anchor.x;
+  let by1 = anchor.y;
+  let bx2 = anchor.x;
+  let by2 = anchor.y;
+  for (const s of structures) {
+    if (Math.max(Math.abs(s.x - anchor.x), Math.abs(s.y - anchor.y)) > CLUSTER_RADIUS) continue;
+    if (s.x < bx1) bx1 = s.x;
+    if (s.x > bx2) bx2 = s.x;
+    if (s.y < by1) by1 = s.y;
+    if (s.y > by2) by2 = s.y;
+  }
+  const m = SETTINGS.MINCUT_MARGIN;
   const rect = {
-    x1: Math.max(1, anchor.x - m),
-    y1: Math.max(1, anchor.y - m),
-    x2: Math.min(48, anchor.x + m),
-    y2: Math.min(48, anchor.y + m),
+    x1: Math.max(1, bx1 - m),
+    y1: Math.max(1, by1 - m),
+    x2: Math.min(48, bx2 + m),
+    y2: Math.min(48, by2 + m),
   };
   const ramparts = minCutRamparts(terrain, rect);
 

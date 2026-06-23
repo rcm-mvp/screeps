@@ -69,8 +69,12 @@ export const SETTINGS = {
    *  derives role-tagged links (controller/source endpoints + a core hub), so
    *  every v1 plan must be recomputed.
    *  v3 (A2): the planner now places a mineral extractor (on the mineral tile) +
-   *  an adjacent mineral container, so v2 plans must be recomputed. */
-  PLAN_VERSION: 3,
+   *  an adjacent mineral container, so v2 plans must be recomputed.
+   *  v4 (adaptive fitter): rooms too closed for the bunker stamp now fall back to
+   *  the adaptive fitter (lib/planner/fit.ts), which builds around the existing
+   *  base; min-cut interior is now the cluster bbox. Replan so closed rooms
+   *  (e.g. W52S13) finally get a plan. */
+  PLAN_VERSION: 4,
   /** Max construction sites the planner places per room per construction tick. */
   PLACE_PER_TICK: 5,
   /** Hard ceiling on total construction sites the game allows account-wide. */

@@ -9,7 +9,10 @@ export { drawPlan } from './overlay';
 // Pipeline pieces (exported for tests):
 export { distanceTransform, idx } from './distanceTransform';
 export { selectAnchor } from './anchor';
-export { STAMP_RADIUS, STAMP_STRUCTURE_COUNT, bunkerStructures, bunkerRoads, stampFits } from './stamp';
+export { STAMP_RADIUS, STAMP_STRUCTURE_COUNT, bunkerStructures, bunkerRoads, stampFits, tileFits, bunkerFragments } from './stamp';
+export type { CouplingTier, Fragment } from './stamp';
 export { minCutRamparts } from './mincut';
 export { planRoads } from './roads';
+export { fitStructures } from './fit';
+export type { FitInput, FitResult } from './fit';
 export type { RoomPlan, PlannedStructure, BasePlanSummary, PlanPointer, PackedPlan } from './types';

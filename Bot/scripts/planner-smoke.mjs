@@ -5,9 +5,10 @@
 // so the planner's algorithms are checked here. Usage: node scripts/planner-smoke.mjs
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // --- minimal Screeps constant sandbox (must exist before the bundle loads) ---
 globalThis.TERRAIN_MASK_WALL = 1;
@@ -27,6 +28,7 @@ const STRUCT = {
   ROAD: 'road',
   RAMPART: 'rampart',
   EXTRACTOR: 'extractor',
+  CONSTRUCTED_WALL: 'constructedWall',
 };
 for (const [k, v] of Object.entries(STRUCT)) globalThis[`STRUCTURE_${k}`] = v;
 
@@ -36,6 +38,7 @@ for (const [k, v] of Object.entries(STRUCT)) globalThis[`STRUCTURE_${k}`] = v;
 globalThis.FIND_SOURCES = 105;
 globalThis.FIND_MINERALS = 117;
 globalThis.FIND_MY_SPAWNS = 112;
+globalThis.FIND_STRUCTURES = 107;
 globalThis.FIND_EXIT_TOP = 1;
 globalThis.FIND_EXIT_RIGHT = 3;
 globalThis.FIND_EXIT_BOTTOM = 5;
@@ -143,6 +146,66 @@ const idx = P.idx;
   check('stamp: anchor tile is the first spawn', structures[0].type === STRUCTURE_SPAWN && structures[0].x === 25 && structures[0].y === 25);
   // Every structure on the anchor's parity → its orthogonal gaps stay walkable.
   check('stamp: all structures on one checkerboard parity', structures.every((s) => ((s.x + s.y) & 1) === 0));
+}
+
+// === 3b. tileFits per-tile validity (SF1) ===================================
+{
+  const clear = () => false; // nothing blocked
+  // A terrain with a single interior wall at (25,25).
+  const wallAt2525 = { get: (x, y) => (x === 25 && y === 25 ? 1 : 0) };
+
+  check('tileFits: clear in-bounds tile is valid', P.tileFits(10, 10, openTerrain, clear) === true);
+  check('tileFits: a wall tile is invalid', P.tileFits(25, 25, wallAt2525, clear) === false);
+  check('tileFits: out-of-bounds (edge margin) is invalid', P.tileFits(1, 10, openTerrain, clear) === false && P.tileFits(48, 10, openTerrain, clear) === false);
+  check('tileFits: a blocked tile is invalid', P.tileFits(10, 10, openTerrain, (x, y) => x === 10 && y === 10) === false);
+
+  // stampFits must be unchanged: all-or-nothing over the full footprint.
+  check('stampFits: an all-open region fits', P.stampFits(25, 25, openTerrain, clear) === true);
+  // A wall inside the footprint rejects the whole anchor. The anchor tile is the
+  // first structure, so a wall there is the simplest in-footprint failure.
+  const wallAtAnchor = { get: (x, y) => (x === 25 && y === 25 ? 1 : 0) };
+  check('stampFits: a wall inside the footprint rejects the anchor', P.stampFits(25, 25, wallAtAnchor, clear) === false);
+  // A blocked tile inside the footprint also rejects the whole anchor.
+  check('stampFits: a blocked tile inside the footprint rejects the anchor', P.stampFits(25, 25, openTerrain, (x, y) => x === 25 && y === 25) === false);
+  // An anchor too close to the edge fails the bounds check.
+  check('stampFits: an anchor too close to the edge is rejected', P.stampFits(3, 3, openTerrain, clear) === false);
+}
+
+// === 3c. bunkerFragments partition the shopping list (SF1) ==================
+{
+  const fragments = P.bunkerFragments();
+  const stamp = P.bunkerStructures(25, 25); // same shopping list, expanded
+
+  // Tiers present, with the documented coupling/splittability flags.
+  const byTier = Object.fromEntries(fragments.map((f) => [f.tier, f]));
+  check('fragments: exactly the three tiers labs/core/extensions', fragments.length === 3 && !!byTier.labs && !!byTier.core && !!byTier.extensions);
+  check('fragments: labs not splittable, tight maxSpread (<=2)', byTier.labs.splittable === false && byTier.labs.maxSpread <= 2);
+  check('fragments: core not splittable, modest maxSpread', byTier.core.splittable === false && byTier.core.maxSpread > 0);
+  check('fragments: extensions splittable, larger maxSpread than core', byTier.extensions.splittable === true && byTier.extensions.maxSpread > byTier.core.maxSpread);
+
+  // Correct tier assignment: labs→labs, extension→extensions, the rest→core.
+  check('fragments: labs tier holds only labs', byTier.labs.specs.every((s) => s.type === STRUCTURE_LAB));
+  check('fragments: extensions tier holds only extensions', byTier.extensions.specs.every((s) => s.type === STRUCTURE_EXTENSION));
+  check('fragments: core tier holds no labs or extensions', byTier.core.specs.every((s) => s.type !== STRUCTURE_LAB && s.type !== STRUCTURE_EXTENSION));
+
+  // Per-type counts over all fragments must match the shopping list exactly —
+  // every spec appears in exactly one fragment, no duplicates or omissions.
+  const countByType = (specs) => specs.reduce((m, s) => ((m[s.type] = (m[s.type] ?? 0) + 1), m), {});
+  const stampCounts = countByType(stamp);
+  const fragCounts = countByType(fragments.flatMap((f) => f.specs));
+  const allTypes = new Set([...Object.keys(stampCounts), ...Object.keys(fragCounts)]);
+  let countsMatch = true;
+  let detail = '';
+  for (const t of allTypes) {
+    if ((stampCounts[t] ?? 0) !== (fragCounts[t] ?? 0)) {
+      countsMatch = false;
+      detail = `${t}: stamp ${stampCounts[t] ?? 0} != frag ${fragCounts[t] ?? 0}`;
+    }
+  }
+  check(`fragments: per-type counts match the shopping list exactly${detail ? ` (${detail})` : ''}`, countsMatch);
+
+  const totalFragSpecs = fragments.reduce((n, f) => n + f.specs.length, 0);
+  check('fragments: total spec count equals STAMP_STRUCTURE_COUNT (no dup/omit)', totalFragSpecs === P.STAMP_STRUCTURE_COUNT && totalFragSpecs === stamp.length);
 }
 
 // === 4. Min-cut actually seals the interior =================================
@@ -378,6 +441,393 @@ const idx = P.idx;
   const dMinContainer = d.structures.filter((s) => s.type === STRUCTURE_CONTAINER && s.role === 'mineral');
   check('mineral: encode/decode preserves the extractor role', dExtractor.length === 1 && dExtractor[0].role === 'extractor');
   check('mineral: encode/decode preserves the mineral container role', dMinContainer.length === 1 && dMinContainer[0].role === 'mineral');
+}
+
+// === 8. Adaptive fitter on the REAL W52S13 fixture (SF2 + SF3) ==============
+{
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const fxDir = join(here, '..', 'test', 'fixtures');
+  const terrainFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.terrain.json'), 'utf8'));
+  const objFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.objects.json'), 'utf8'));
+
+  // TerrainLike from the grid: wall→TERRAIN_MASK_WALL, swamp→2, plain→0.
+  const grid = terrainFx.grid; // grid[y][x]
+  const terrain = {
+    get: (x, y) => {
+      if (x < 0 || x > 49 || y < 0 || y > 49) return TERRAIN_MASK_WALL;
+      const t = grid[y][x];
+      return t === 'wall' ? TERRAIN_MASK_WALL : t === 'swamp' ? 2 : 0;
+    },
+  };
+  const openness = P.distanceTransform(terrain);
+
+  // Map the fixture's structure type strings to BuildableStructureConstant. The
+  // fixture includes constructedWall/road/container/spawn/storage/tower/extension.
+  const TYPE_MAP = {
+    spawn: STRUCTURE_SPAWN,
+    extension: STRUCTURE_EXTENSION,
+    tower: STRUCTURE_TOWER,
+    container: STRUCTURE_CONTAINER,
+    storage: STRUCTURE_STORAGE,
+    link: STRUCTURE_LINK,
+    terminal: STRUCTURE_TERMINAL,
+    lab: STRUCTURE_LAB,
+    factory: STRUCTURE_FACTORY,
+    powerSpawn: STRUCTURE_POWER_SPAWN,
+    nuker: STRUCTURE_NUKER,
+    observer: STRUCTURE_OBSERVER,
+    road: STRUCTURE_ROAD,
+    rampart: STRUCTURE_RAMPART,
+    constructedWall: STRUCTURE_CONSTRUCTED_WALL,
+    extractor: STRUCTURE_EXTRACTOR,
+  };
+  const existing = objFx.structures.map((s) => ({ x: s.x, y: s.y, type: TYPE_MAP[s.type] ?? s.type }));
+  const storage = objFx.structures.find((s) => s.type === 'storage');
+
+  const input = {
+    terrain,
+    openness,
+    spawn: objFx.spawns[0] ?? null,
+    existing,
+    sources: objFx.sources.map((s) => ({ x: s.x, y: s.y })),
+    controller: objFx.controller ? { x: objFx.controller.x, y: objFx.controller.y } : null,
+    mineral: objFx.mineral ? { x: objFx.mineral.x, y: objFx.mineral.y } : null,
+    storagePos: storage ? { x: storage.x, y: storage.y } : null,
+  };
+
+  const res = P.fitStructures(input);
+  check('fit/W52S13: produced a result', !!res);
+
+  if (res) {
+    const { anchor, structures } = res;
+    const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+    // --- Invariant: anchor is the existing spawn, in bounds. ---
+    check(
+      'fit/W52S13: anchor is the existing spawn',
+      anchor.x === objFx.spawns[0].x && anchor.y === objFx.spawns[0].y,
+    );
+    check('fit/W52S13: anchor in bounds 2..47', anchor.x >= 2 && anchor.x <= 47 && anchor.y >= 2 && anchor.y <= 47);
+
+    // --- Invariant: no two output structures share a tile. ---
+    const tiles = new Set();
+    let dup = false;
+    for (const s of structures) {
+      const k = s.x * 50 + s.y;
+      if (tiles.has(k)) dup = true;
+      tiles.add(k);
+    }
+    check('fit/W52S13: no two structures share a tile', !dup);
+
+    // --- Invariant: no NEWLY-placed structure on a natural wall tile. ---
+    // (Existing structures are kept as-is even if their terrain reads as wall.)
+    const existingKeys = new Set(existing.map((s) => s.x * 50 + s.y));
+    const newlyPlaced = structures.filter((s) => !existingKeys.has(s.x * 50 + s.y));
+    check(
+      'fit/W52S13: no newly-placed structure on a wall',
+      newlyPlaced.every((s) => terrain.get(s.x, s.y) !== TERRAIN_MASK_WALL),
+    );
+
+    // --- Invariant: no NEWLY-placed structure on a blocked (key ± adjacency) tile. ---
+    const blocked = new Set();
+    const addRing = (p) => {
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) blocked.add((p.x + dx) * 50 + (p.y + dy));
+    };
+    for (const s of input.sources) addRing(s);
+    if (input.controller) addRing(input.controller);
+    if (input.mineral) addRing(input.mineral);
+    check(
+      'fit/W52S13: no newly-placed structure on a key/blocked tile',
+      newlyPlaced.every((s) => !blocked.has(s.x * 50 + s.y)),
+    );
+
+    // --- Invariant: every newly-placed structure is in bounds 2..47. ---
+    check(
+      'fit/W52S13: all newly-placed structures in bounds',
+      newlyPlaced.every((s) => s.x >= 2 && s.x <= 47 && s.y >= 2 && s.y <= 47),
+    );
+
+    // --- Invariant: every existing EMITTABLE structure appears in the output
+    // unchanged. Roads/ramparts/constructed-walls aren't emitted into
+    // plan.structures (they'd break encodePlan / belong in plan.roads|ramparts),
+    // but they MUST stay occupied — checked separately below. ---
+    const EMITTABLE = new Set([
+      STRUCTURE_SPAWN, STRUCTURE_STORAGE, STRUCTURE_TERMINAL, STRUCTURE_TOWER,
+      STRUCTURE_LINK, STRUCTURE_POWER_SPAWN, STRUCTURE_FACTORY, STRUCTURE_NUKER,
+      STRUCTURE_OBSERVER, STRUCTURE_LAB, STRUCTURE_EXTENSION, STRUCTURE_CONTAINER,
+      STRUCTURE_EXTRACTOR,
+    ]);
+    const outByTile = new Map(structures.map((s) => [s.x * 50 + s.y, s]));
+    check(
+      'fit/W52S13: every existing EMITTABLE structure preserved (position + type)',
+      existing.filter((e) => EMITTABLE.has(e.type)).every((e) => {
+        const m = outByTile.get(e.x * 50 + e.y);
+        return m && m.type === e.type;
+      }),
+    );
+    // --- Invariant: NON-emittable existing tiles (roads/walls) are NOT in
+    // plan.structures, AND no newly-placed structure was built on ANY existing
+    // tile (occupancy respected for roads/walls too, not just emitted types). ---
+    check(
+      'fit/W52S13: roads/constructed-walls excluded from plan.structures',
+      existing.filter((e) => !EMITTABLE.has(e.type)).every((e) => !outByTile.has(e.x * 50 + e.y)),
+    );
+    check(
+      'fit/W52S13: no newly-placed structure overlaps an existing tile (roads/walls occupied)',
+      newlyPlaced.every((s) => !existingKeys.has(s.x * 50 + s.y)),
+    );
+
+    // --- Invariant: WALKABILITY. A packed base can trap creeps; floodfill
+    // (8-directional, like Screeps movement) over non-wall, non-obstacle tiles
+    // from the anchor must still reach a tile adjacent to every source,
+    // controller and mineral — otherwise the colony can't service them. ---
+    {
+      const WALKABLE_STRUCT = new Set([STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_RAMPART]);
+      const obstacle = new Set();
+      for (const s of structures) if (!WALKABLE_STRUCT.has(s.type)) obstacle.add(s.x * 50 + s.y);
+      // Existing constructed walls block movement too (not emitted into structures).
+      for (const e of existing) if (e.type === STRUCTURE_CONSTRUCTED_WALL) obstacle.add(e.x * 50 + e.y);
+      const passable = (x, y) =>
+        x >= 0 && x <= 49 && y >= 0 && y <= 49 &&
+        terrain.get(x, y) !== TERRAIN_MASK_WALL && !obstacle.has(x * 50 + y);
+      // Seed from a passable tile next to the anchor (the anchor itself holds a spawn).
+      const seeds = [];
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (passable(anchor.x + dx, anchor.y + dy)) seeds.push([anchor.x + dx, anchor.y + dy]);
+      }
+      const seen = new Set();
+      const stack = [...seeds.map(([x, y]) => x * 50 + y)];
+      for (const s of stack) seen.add(s);
+      while (stack.length) {
+        const k = stack.pop();
+        const x = Math.floor(k / 50), y = k % 50;
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy, nk = nx * 50 + ny;
+          if (!seen.has(nk) && passable(nx, ny)) { seen.add(nk); stack.push(nk); }
+        }
+      }
+      const reachableAdj = (p) => {
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          if (seen.has((p.x + dx) * 50 + (p.y + dy))) return true;
+        }
+        return false;
+      };
+      const keys = [...input.sources, ...(input.controller ? [input.controller] : []), ...(input.mineral ? [input.mineral] : [])];
+      check(
+        'fit/W52S13: walkable — every source/controller/mineral reachable through the placed base',
+        keys.every(reachableAdj),
+      );
+    }
+
+    // --- Invariant: per-type output count never exceeds the bunker target. ---
+    // Targets = bunkerStructures' per-type counts. Existing non-bunker types
+    // (road/container/constructedWall) have no target → not capped.
+    const stamp = P.bunkerStructures(25, 25);
+    const target = {};
+    for (const s of stamp) target[s.type] = (target[s.type] ?? 0) + 1;
+    const outCount = {};
+    for (const s of structures) outCount[s.type] = (outCount[s.type] ?? 0) + 1;
+    let overCap = '';
+    for (const t of Object.keys(target)) {
+      if ((outCount[t] ?? 0) > target[t]) overCap = `${t}: ${outCount[t]} > ${target[t]}`;
+    }
+    check(`fit/W52S13: per-type output within bunker target${overCap ? ` (${overCap})` : ''}`, !overCap);
+
+    // --- Invariant: non-splittable fragments (labs, core) stay clustered. ---
+    // Their NEW placements must fit in a bounding box <= (2*maxSpread+1) per side.
+    const fragments = P.bunkerFragments();
+    const byTier = Object.fromEntries(fragments.map((f) => [f.tier, f]));
+    const newByTier = (typesInTier) => newlyPlaced.filter((s) => typesInTier.has(s.type));
+    const labTypes = new Set([STRUCTURE_LAB]);
+    const coreTypes = new Set(byTier.core.specs.map((s) => s.type));
+    const bbox = (arr) => {
+      if (!arr.length) return { w: 0, h: 0 };
+      let x1 = 50, x2 = -1, y1 = 50, y2 = -1;
+      for (const s of arr) {
+        if (s.x < x1) x1 = s.x;
+        if (s.x > x2) x2 = s.x;
+        if (s.y < y1) y1 = s.y;
+        if (s.y > y2) y2 = s.y;
+      }
+      return { w: x2 - x1 + 1, h: y2 - y1 + 1 };
+    };
+    const labBox = bbox(newByTier(labTypes));
+    const coreBox = bbox(newByTier(coreTypes));
+    const labMax = 2 * byTier.labs.maxSpread + 1;
+    const coreMax = 2 * byTier.core.maxSpread + 1;
+    check(
+      `fit/W52S13: new labs clustered within ${labMax}x${labMax} (got ${labBox.w}x${labBox.h})`,
+      labBox.w <= labMax && labBox.h <= labMax,
+    );
+    check(
+      `fit/W52S13: new core clustered within ${coreMax}x${coreMax} (got ${coreBox.w}x${coreBox.h})`,
+      coreBox.w <= coreMax && coreBox.h <= coreMax,
+    );
+
+    // --- Invariant: determinism (run twice, deep-equal output). ---
+    const res2 = P.fitStructures(input);
+    check('fit/W52S13: deterministic (identical output on re-run)', JSON.stringify(res) === JSON.stringify(res2));
+
+    // --- Diagnostic summary (printed, not asserted) ---
+    const existCount = {};
+    for (const s of existing) existCount[s.type] = (existCount[s.type] ?? 0) + 1;
+    const placedCount = {};
+    for (const s of newlyPlaced) placedCount[s.type] = (placedCount[s.type] ?? 0) + 1;
+    const fmt = (t) =>
+      `${t}: existing ${existCount[t] ?? 0} + placed ${placedCount[t] ?? 0} = ${(existCount[t] ?? 0) + (placedCount[t] ?? 0)}/${target[t] ?? '-'}`;
+    console.log('  --- W52S13 placement summary ---');
+    console.log(`  anchor (${anchor.x},${anchor.y}); total structures ${structures.length} (existing ${existing.length}, placed ${newlyPlaced.length})`);
+    for (const t of Object.keys(target)) console.log('  ' + fmt(t));
+    console.log(`  labs new bbox ${labBox.w}x${labBox.h}; core new bbox ${coreBox.w}x${coreBox.h}`);
+
+    // Report which targets couldn't be fully placed (cramped-room reality).
+    const short = Object.keys(target).filter((t) => (outCount[t] ?? 0) < target[t]);
+    if (short.length) console.log('  under target: ' + short.map((t) => `${t} ${outCount[t] ?? 0}/${target[t]}`).join(', '));
+  }
+}
+
+// === 9. Adaptive fitter — synthetic link tagging (SF2) ======================
+{
+  // A tiny open room: a link adjacent to the controller, a link near a fake
+  // storage, and a link adjacent to a source — assert role tagging.
+  const terrain = { get: () => 0 };
+  const openness = P.distanceTransform(terrain);
+  const controller = { x: 40, y: 40 };
+  const source = { x: 10, y: 10 };
+  const storage = { x: 25, y: 25 };
+
+  const existing = [
+    { x: 24, y: 25, type: STRUCTURE_SPAWN }, // anchor seed via spawn
+    { x: storage.x, y: storage.y, type: STRUCTURE_STORAGE },
+    { x: 26, y: 25, type: STRUCTURE_LINK }, // adjacent to storage (range 1) → core
+    { x: 39, y: 40, type: STRUCTURE_LINK }, // adjacent to controller → controller
+    { x: 11, y: 10, type: STRUCTURE_LINK }, // adjacent to source → source
+  ];
+
+  const res = P.fitStructures({
+    terrain,
+    openness,
+    spawn: { x: 24, y: 25 },
+    existing,
+    sources: [source],
+    controller,
+    mineral: null,
+    storagePos: storage,
+  });
+  check('fit/synth: produced a result', !!res);
+
+  const linkAt = (x, y) => res.structures.find((s) => s.type === STRUCTURE_LINK && s.x === x && s.y === y);
+  check('fit/synth: controller-adjacent link tagged role:controller', linkAt(39, 40)?.role === 'controller');
+  check('fit/synth: source-adjacent link tagged role:source', linkAt(11, 10)?.role === 'source');
+  check('fit/synth: storage-nearest link tagged role:core', linkAt(26, 25)?.role === 'core');
+
+  // No-links graceful path: same room without any existing links still fits.
+  const res2 = P.fitStructures({
+    terrain,
+    openness,
+    spawn: { x: 24, y: 25 },
+    existing: [{ x: 24, y: 25, type: STRUCTURE_SPAWN }],
+    sources: [source],
+    controller,
+    mineral: null,
+    storagePos: null,
+  });
+  check('fit/synth: no-links case still produces a result', !!res2);
+  check(
+    'fit/synth: no-links case places fresh (untagged) links toward the target',
+    res2 && res2.structures.filter((s) => s.type === STRUCTURE_LINK).length === 6,
+  );
+}
+
+// === 10. computePlan end-to-end fallback on the real closed room (SF6) ======
+// The stamp can't anchor in W52S13, so computePlan must fall back to the fitter
+// and still emit a complete, ENCODABLE plan (links, extractor, ramparts) built
+// around the legacy base. This is the full integration, not just fitStructures.
+{
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const fxDir = join(here, '..', 'test', 'fixtures');
+  const terrainFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.terrain.json'), 'utf8'));
+  const objFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.objects.json'), 'utf8'));
+  const grid = terrainFx.grid;
+  const openTerrainGet = (x, y) => {
+    if (x < 0 || x > 49 || y < 0 || y > 49) return TERRAIN_MASK_WALL;
+    const t = grid[y][x];
+    return t === 'wall' ? TERRAIN_MASK_WALL : t === 'swamp' ? 2 : 0;
+  };
+  const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+  const sources = objFx.sources.map((s) => ({ pos: { x: s.x, y: s.y } }));
+  const controller = objFx.controller ? { pos: { x: objFx.controller.x, y: objFx.controller.y } } : undefined;
+  const mineral = objFx.mineral ? { pos: { x: objFx.mineral.x, y: objFx.mineral.y }, mineralType: objFx.mineral.mineralType } : undefined;
+  const spawnObj = { pos: { x: objFx.spawns[0].x, y: objFx.spawns[0].y } };
+  const storageObj = objFx.structures.find((s) => s.type === 'storage');
+  const findStructures = objFx.structures.map((s) => ({ pos: { x: s.x, y: s.y }, structureType: s.type }));
+  const room = {
+    name: 'W52S13',
+    getTerrain: () => ({ get: openTerrainGet }),
+    controller,
+    storage: storageObj ? { pos: { x: storageObj.x, y: storageObj.y } } : undefined,
+    find: (type) => {
+      if (type === FIND_SOURCES) return sources;
+      if (type === FIND_MINERALS) return mineral ? [mineral] : [];
+      if (type === FIND_MY_SPAWNS) return [spawnObj];
+      if (type === FIND_STRUCTURES) return findStructures;
+      return [];
+    },
+  };
+
+  const plan = P.computePlan(room);
+  check('e2e/W52S13: computePlan falls back to the fitter and produces a plan', !!plan);
+
+  if (plan) {
+    check('e2e/W52S13: anchor is the existing spawn', plan.anchor.x === spawnObj.pos.x && plan.anchor.y === spawnObj.pos.y);
+
+    // No two plan structures share a tile (incl. derived containers/links/extractor).
+    const seen = new Set();
+    let dup = false;
+    for (const s of plan.structures) { const k = s.x * 50 + s.y; if (seen.has(k)) dup = true; seen.add(k); }
+    check('e2e/W52S13: no two plan structures share a tile', !dup);
+
+    // No plan structure on a natural wall tile — EXCEPT the extractor, which by
+    // design sits on the mineral, whose terrain reads as wall (Screeps quirk).
+    check(
+      'e2e/W52S13: no plan structure on a wall (extractor on the mineral excepted)',
+      plan.structures.every((s) => s.type === STRUCTURE_EXTRACTOR || openTerrainGet(s.x, s.y) !== TERRAIN_MASK_WALL),
+    );
+
+    // Energy network: a controller link adjacent to the controller, a core link,
+    // and at least one source link — all derived even with no legacy links.
+    const links = plan.structures.filter((s) => s.type === STRUCTURE_LINK);
+    check('e2e/W52S13: a controller link adjacent to the controller', links.some((l) => l.role === 'controller' && controller && cheb(l, controller.pos) === 1));
+    check('e2e/W52S13: a core link exists', links.some((l) => l.role === 'core'));
+    check('e2e/W52S13: at least one source link placed', links.some((l) => l.role === 'source'));
+    // Every source must be serviceable — a container OR a link adjacent. In a
+    // cramped room a source boxed in by walls (only one open neighbour) gets a
+    // container but no link; that's acceptable (its energy is hauled).
+    check(
+      'e2e/W52S13: every source serviceable (container or link adjacent)',
+      sources.every((src) => plan.structures.some((s) => (s.type === STRUCTURE_CONTAINER || s.type === STRUCTURE_LINK) && cheb(s, src.pos) === 1)),
+    );
+
+    // Extractor sits on the mineral tile.
+    check('e2e/W52S13: extractor on the mineral tile', plan.structures.some((s) => s.type === STRUCTURE_EXTRACTOR && s.x === objFx.mineral.x && s.y === objFx.mineral.y));
+
+    // Min-cut produced a rampart ring around the cluster.
+    check('e2e/W52S13: ramparts seal the base cluster (non-empty)', plan.ramparts.length > 0);
+
+    // CRITICAL: the plan must round-trip through encode/decode unchanged. Any
+    // non-encodable type (a road or constructedWall leaking into structures)
+    // would become a -1 index → undefined type on decode, failing this.
+    const decoded = P.decodePlan(P.encodePlan(plan));
+    check(
+      'e2e/W52S13: encode/decode round-trips structures (no unencodable types leaked in)',
+      decoded.structures.length === plan.structures.length &&
+        decoded.structures.every((s, i) => s.type === plan.structures[i].type && !!s.type) &&
+        decoded.ramparts.length === plan.ramparts.length,
+    );
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall planner checks passed');
