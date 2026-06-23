@@ -27,7 +27,7 @@ returns `null` → no plan → no construction, no links, no ramparts.
 
 | Decision | Choice |
 |---|---|
-| **Where the fallback runs** | **In-game** (TypeScript in the bot), cached "forever" in RawMemory. Keep the bot autonomous. Server-side (Strategist) stays an **optional future upgrade**, not now. |
+| **Where the fallback runs** | **SERVER-SIDE (Strategist).** The whole point is to offload the heavy adaptive computation to the dedicated box's CPU, NOT the in-game sandbox. The bot keeps the cheap stamp in-game; when it fails the bot **signals** (surfaces "needs plan" in ColonyState) and waits. The Strategist computes the adaptive plan with unlimited CPU and writes it to RawMemory **segment 90** via `memory.setSegment`; the bot just **reads** segment 90 (cached forever, survives resets). The pure `fit.ts` algorithm we built is REUSED as the shared core the server runs — it was written pure (no `Game`/`PathFinder`) for exactly this. _(Superseded the earlier "in-game now" decision: in-game execution saves no in-game CPU, defeating the goal.)_ |
 | **Default stamp** | **Stays the primary path.** The adaptive fitter is a **fallback only when the stamp doesn't fit.** Easy/open rooms keep getting the clean bunker. |
 | **Fit strategy** | **Hybrid of "flexible fill" + "fragmented stamp"** (see §4). Fragment only along low-coupling seams; never split interdependent structures across the room. Must **incorporate existing buildings**. |
 | **Roads** | **"Close enough", not optimal.** Reuse/share lanes, no redundant parallel roads (`roads.ts` already lane-shares — build on it). |
@@ -35,25 +35,40 @@ returns `null` → no plan → no construction, no links, no ramparts.
 | **Testing** | **Smoke (deterministic) + one itest scenario** (cramped room, place+build end-to-end). |
 | **Persistence** | Compute **once**, cache in RawMemory segment 90 **forever**; recompute only on invalidation / `PLAN_VERSION` bump (already how the segment cache works). |
 
-## 3. Design overview — two-tier planner
+## 3. Design overview — in-game stamp, server-side fitter
 
 ```
-computePlan(room):
-  1. try the DEFAULT bunker stamp (existing path)
-        anchor at spawn or openness peak; stampFits all-or-nothing
-     └─ fits? ──> use it (unchanged behaviour for open rooms)
-  2. else  ADAPTIVE FITTER (new, §4)
-        read terrain + existing structures + sources/controller/mineral + spawn
-        place fragments/flex-fill around what exists, fit what's possible
-     └─ produce a RoomPlan in the SAME shape (structures/ramparts/roads + roles)
-  3. else  null  (only if even the fitter can't place a core — should be rare)
+BOT (in-game, cheap — stamp only):
+  computePlan(room):
+    try the DEFAULT bunker stamp (anchor at spawn / openness peak)
+      fits? ──> use it; encodePlan → segment 90 (open rooms, unchanged)
+      else  ──> DO NOT run the fitter in-game. Flag the room "needs server
+                plan" (surface in ColonyState) and stop attempting. Wait.
 
-result -> encodePlan -> RawMemory segment 90 (cached forever)
+SERVER (Strategist, unlimited CPU — the adaptive fitter):
+  observe ColonyState over WS → room flagged "needs plan" (and segment 90
+    has no current-version plan for it)?
+      pull rooms.terrain + rooms.objects via the API bridge
+      run the SHARED planner core (fit.ts placement + derived containers/links/
+        extractor + min-cut ramparts + roads + encodePlan)  ← unlimited CPU
+      memory.setSegment(90, { ...existing, [room]: encodedPlan })
+
+BOT: getCachedPlan reads segment 90 (UNCHANGED) → construction + links proceed.
 ```
 
-The output of both tiers is the **same `RoomPlan` type** (`types.ts`), so
-everything downstream — `nextSites`, `construction.ts`, `links.ts`,
-`summarize`, the overlay — works unchanged.
+The plan the server writes is the **same `RoomPlan`/`PackedPlan` wire format**
+the bot already decodes (`decodePlan`, version-gated on `PLAN_VERSION`), so
+everything downstream — `getCachedPlan`, `nextSites`, `construction.ts`,
+`links.ts`, `summarize`, the overlay — works unchanged. **The bot stays
+autonomous for open rooms (stamp in-game) and needs the server only ONCE to
+generate a closed-room plan, which then persists in segment 90 forever.**
+
+> **Shared planner core.** The pure modules (`fit`, `stamp`, `distanceTransform`,
+> `mincut`, `types`, the derived-structure logic + `encodePlan`/`decodePlan` +
+> TYPES/ROLES tables, and a **pure roads pathfinder** replacing the in-game
+> `PathFinder`) must run in BOTH the bot (stamp path) and the Strategist (fitter).
+> They reference Screeps global constants (`STRUCTURE_*`, `TERRAIN_MASK_WALL`) —
+> the shared core must define these as plain values so it runs under Node.
 
 ## 4. Adaptive fitter — algorithm
 
@@ -213,15 +228,11 @@ preferring compactness, splitting only when forced:
   fitter wants a *different* structure type, the existing one wins (it's fixed);
   the fitter places the missing type elsewhere.
 
-## 10. Out of scope (future — keep the seams open, don't build now)
+## 10. Roadmap / related
 
-Explicitly **not built now**, but the §8 deliverables must keep the seams
-compatible (see §11).
-
-- **F1 — Server-side (Strategist) plan computation.** Unlimited CPU + a shared,
-  versioned plan contract + `setSegment(90)` injection. The in-game fitter is
-  designed so this can later **replace** the fitter's *placement* step without
-  touching the bot's consume path (it already reads segment 90).
+- **F1 — Server-side (Strategist) plan computation. ← NOW THE ARCHITECTURE (§3, §12).**
+  Unlimited CPU + the shared planner core + `setSegment(90)` injection. The bot's
+  consume path is unchanged (it already reads segment 90).
 - **F2 — Manual per-room recalculation trigger.** Force a replan for a room on
   demand from outside the bot (after the legacy base changes, after manual edits,
   or to re-fit at a new RCL). The bot already has `invalidate(room)` →
@@ -262,3 +273,41 @@ Build the fitter so these future items stay cheap to add — without doing them 
   already does the right thing (drop cache → bucket-gated replan).
 - **Reuse `overlay.ts`'s type→visual mapping** as the shared mapping for F3 so the
   in-game and UI visuals agree.
+
+## 12. Server-side execution — deliverables (the correct architecture)
+
+What's DONE (reusable): the pure `fit.ts` algorithm, `stamp.ts` fragments/tileFits,
+`distanceTransform`, `mincut`, the `encodePlan`/`decodePlan` + TYPES/ROLES tables,
+and the full smoke validation against the real W52S13 terrain. These become the
+**shared planner core** the server runs.
+
+- [ ] **SV1 — Shared planner core.** Make the pure planner runnable under Node:
+      a `buildPlan(input)` orchestrator (terrain grid + objects → `PackedPlan`)
+      that runs fit → derived containers/links/extractor → min-cut → roads →
+      encode, with **no `Game`/`Room`/`RawMemory`/`PathFinder`**. Define the
+      Screeps constants it uses as plain values (Node has no globals). Shared by
+      the bot (stamp path) and the Strategist. Decide the share mechanism (new
+      package vs vendor into API vs Bot-as-source + Strategist imports).
+- [ ] **SV2 — Pure roads pathfinder.** Replace the in-game `PathFinder` in the
+      roads step with a plain A*/Dijkstra over the 50×50 cost matrix, so roads
+      compute server-side (and deterministically in tests).
+- [ ] **SV3 — Bot: stamp-only + signal.** `computePlan` stops running the fitter
+      in-game; on stamp failure it flags the room "needs server plan" in
+      `ColonyState` (executor extension, like `colony.mineral`) and stops
+      re-attempting. Consume path (segment 90) unchanged.
+- [ ] **SV4 — Strategist planner loop.** Observe ColonyState → for a flagged room
+      with no current-version segment-90 plan: `rooms.terrain` + `rooms.objects`
+      → `buildPlan` → `memory.setSegment(90, merge)`. Idempotent, version-aware,
+      respects the write budget (a plan is written once per room).
+- [ ] **SV5 — Tests.** Unit: `buildPlan` on the W52S13 fixture under Node yields
+      the same valid/walkable/encodable plan (port the smoke invariants).
+      Strategist: a test that a flagged room → setSegment(90) with a decodable
+      plan. Re-run the bot smoke + itest (no regression to the stamp path).
+- [ ] **SV6 — Deploy + verify.** Strategist running, bot deployed; W52S13 gets a
+      server-computed plan in segment 90 and builds from it.
+
+**Resilience note:** the box isn't reboot-proof (tmux, see migration memory).
+Once segment 90 holds a plan it persists, so the server is only needed to
+GENERATE. Decide whether the bot keeps the in-game fitter as a *fallback* (server
+preferred; in-game only if no server plan arrives) for robustness, or pure
+server-side (bot waits).
