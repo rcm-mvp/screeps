@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 // --- minimal Screeps constant sandbox (must exist before the bundle loads) ---
 globalThis.TERRAIN_MASK_WALL = 1;
+globalThis.TERRAIN_MASK_SWAMP = 2;
 const STRUCT = {
   SPAWN: 'spawn',
   EXTENSION: 'extension',
@@ -827,6 +828,174 @@ const idx = P.idx;
         decoded.structures.every((s, i) => s.type === plan.structures[i].type && !!s.type) &&
         decoded.ramparts.length === plan.ramparts.length,
     );
+  }
+}
+
+// === 11. PURE buildPlan on the W52S13 fixture, NO Screeps runtime (SV1+SV2) ==
+// Proves the shared planner CORE runs under Node from a plain BuildPlanInput —
+// no Room/Game/PathFinder/RoomPosition mock anywhere — and that the pure roads
+// pathfinder (SV2) now yields a connected road network. Same structural
+// invariants as the e2e section above, plus roads-now-non-empty + connectivity.
+{
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const fxDir = join(here, '..', 'test', 'fixtures');
+  const terrainFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.terrain.json'), 'utf8'));
+  const objFx = JSON.parse(readFileSync(join(fxDir, 'w52s13.objects.json'), 'utf8'));
+  const grid = terrainFx.grid; // grid[y][x]
+  // Pure TerrainLike (wall→TERRAIN_MASK_WALL, swamp→TERRAIN_MASK_SWAMP, plain→0).
+  const terrain = {
+    get: (x, y) => {
+      if (x < 0 || x > 49 || y < 0 || y > 49) return TERRAIN_MASK_WALL;
+      const t = grid[y][x];
+      return t === 'wall' ? TERRAIN_MASK_WALL : t === 'swamp' ? TERRAIN_MASK_SWAMP : 0;
+    },
+  };
+  const TYPE_MAP = {
+    spawn: STRUCTURE_SPAWN, extension: STRUCTURE_EXTENSION, tower: STRUCTURE_TOWER,
+    container: STRUCTURE_CONTAINER, storage: STRUCTURE_STORAGE, link: STRUCTURE_LINK,
+    terminal: STRUCTURE_TERMINAL, lab: STRUCTURE_LAB, factory: STRUCTURE_FACTORY,
+    powerSpawn: STRUCTURE_POWER_SPAWN, nuker: STRUCTURE_NUKER, observer: STRUCTURE_OBSERVER,
+    road: STRUCTURE_ROAD, rampart: STRUCTURE_RAMPART, constructedWall: STRUCTURE_CONSTRUCTED_WALL,
+    extractor: STRUCTURE_EXTRACTOR,
+  };
+  const storage = objFx.structures.find((s) => s.type === 'storage');
+  // BuildPlanInput — a PLAIN object, exactly what the Strategist will assemble
+  // from the API bridge. Ramparts excluded from `existing` (occupancy ≠ rampart).
+  const input = {
+    terrain,
+    sources: objFx.sources.map((s) => ({ x: s.x, y: s.y })),
+    controller: objFx.controller ? { x: objFx.controller.x, y: objFx.controller.y } : null,
+    mineral: objFx.mineral ? { x: objFx.mineral.x, y: objFx.mineral.y, mineralType: objFx.mineral.mineralType } : null,
+    spawn: objFx.spawns[0] ? { x: objFx.spawns[0].x, y: objFx.spawns[0].y } : null,
+    existing: objFx.structures
+      .filter((s) => s.type !== 'rampart')
+      .map((s) => ({ x: s.x, y: s.y, type: TYPE_MAP[s.type] ?? s.type })),
+    storagePos: storage ? { x: storage.x, y: storage.y } : null,
+  };
+
+  const plan = P.buildPlan(input);
+  check('pure/W52S13: buildPlan returns a plan with no Screeps runtime', !!plan);
+
+  if (plan) {
+    const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    const spawn = objFx.spawns[0];
+
+    // --- anchor is the existing spawn, in bounds ---
+    check('pure/W52S13: anchor is the existing spawn', plan.anchor.x === spawn.x && plan.anchor.y === spawn.y);
+    check('pure/W52S13: anchor in bounds 2..47', plan.anchor.x >= 2 && plan.anchor.x <= 47 && plan.anchor.y >= 2 && plan.anchor.y <= 47);
+
+    // --- no two structures share a tile ---
+    const seen = new Set();
+    let dup = false;
+    for (const s of plan.structures) { const k = s.x * 50 + s.y; if (seen.has(k)) dup = true; seen.add(k); }
+    check('pure/W52S13: no two plan structures share a tile', !dup);
+
+    // --- no structure on a wall (extractor on the mineral excepted) ---
+    check(
+      'pure/W52S13: no structure on a wall (extractor excepted)',
+      plan.structures.every((s) => s.type === STRUCTURE_EXTRACTOR || terrain.get(s.x, s.y) !== TERRAIN_MASK_WALL),
+    );
+
+    // --- energy network: controller/core/source links ---
+    const links = plan.structures.filter((s) => s.type === STRUCTURE_LINK);
+    check('pure/W52S13: controller link adjacent to the controller', links.some((l) => l.role === 'controller' && input.controller && cheb(l, input.controller) === 1));
+    check('pure/W52S13: a core link exists', links.some((l) => l.role === 'core'));
+    check('pure/W52S13: at least one source link placed', links.some((l) => l.role === 'source'));
+
+    // --- extractor on the mineral tile ---
+    check('pure/W52S13: extractor on the mineral tile', plan.structures.some((s) => s.type === STRUCTURE_EXTRACTOR && s.x === objFx.mineral.x && s.y === objFx.mineral.y));
+
+    // --- min-cut ramparts non-empty ---
+    check('pure/W52S13: ramparts seal the cluster (non-empty)', plan.ramparts.length > 0);
+
+    // --- SV2: roads now COMPUTED (non-empty) and CONNECT the cluster ---
+    check('pure/W52S13: roads are non-empty (pure pathfinder ran)', plan.roads.length > 0);
+
+    // Road network connectivity: the union {anchor} ∪ roads is one 8-connected
+    // blob, and a road tile (or the anchor) sits within Chebyshev 1 of every
+    // source / controller / mineral — i.e. the lanes actually reach the targets.
+    {
+      const roadSet = new Set(plan.roads.map((r) => r.x * 50 + r.y));
+      const anchorKey = plan.anchor.x * 50 + plan.anchor.y;
+      const nodes = new Set(roadSet);
+      nodes.add(anchorKey);
+      // Flood from the anchor over the road network (8-directional adjacency).
+      const seenR = new Set([anchorKey]);
+      const stack = [anchorKey];
+      while (stack.length) {
+        const k = stack.pop();
+        const x = Math.floor(k / 50), y = k % 50;
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          const nk = (x + dx) * 50 + (y + dy);
+          if (nodes.has(nk) && !seenR.has(nk)) { seenR.add(nk); stack.push(nk); }
+        }
+      }
+      check('pure/W52S13: road network is fully connected to the anchor', seenR.size === nodes.size);
+
+      const reachesByRoad = (p) => {
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          const nk = (p.x + dx) * 50 + (p.y + dy);
+          if (seenR.has(nk)) return true; // a connected road (or anchor) is adjacent
+        }
+        return false;
+      };
+      // A hauler services a source/controller/mineral by standing on a road next to
+      // its PICKUP (the derived container/link), not next to the raw resource tile —
+      // in a cramped room the resource's only open neighbour IS its container, so the
+      // road necessarily ends one tile further out. Assert the pickup is road-served.
+      const pickupFor = (p) => {
+        let best = null, bestD = Infinity;
+        for (const s of plan.structures) {
+          if (s.type !== STRUCTURE_CONTAINER && s.type !== STRUCTURE_LINK) continue;
+          const d = cheb(s, p);
+          if (d <= 1 && d < bestD) { bestD = d; best = { x: s.x, y: s.y }; }
+        }
+        return best ?? p;
+      };
+      const keys = [...input.sources, ...(input.controller ? [input.controller] : []), ...(input.mineral ? [input.mineral] : [])];
+      check('pure/W52S13: a connected road reaches every source/controller/mineral pickup', keys.map(pickupFor).every(reachesByRoad));
+    }
+
+    // --- determinism: identical plan on re-run ---
+    const plan2 = P.buildPlan(input);
+    check('pure/W52S13: deterministic (identical plan on re-run)', JSON.stringify(plan) === JSON.stringify(plan2));
+
+    // --- encode/decode round-trips structures, ramparts AND roads ---
+    const decoded = P.decodePlan(P.encodePlan(plan));
+    check(
+      'pure/W52S13: encode/decode round-trips structures/ramparts/roads',
+      decoded.structures.length === plan.structures.length &&
+        decoded.structures.every((s, i) => s.type === plan.structures[i].type && !!s.type && s.role === plan.structures[i].role) &&
+        decoded.ramparts.length === plan.ramparts.length &&
+        decoded.roads.length === plan.roads.length &&
+        decoded.roads.every((r, i) => r.x === plan.roads[i].x && r.y === plan.roads[i].y),
+    );
+
+    // --- parity with the Room adapter: computePlan must delegate to buildPlan ---
+    // The same fixture through the Room mock yields an EQUIVALENT plan (structures
+    // /ramparts/roads identical; only v/at differ, which the adapter stamps).
+    {
+      const room = {
+        name: 'W52S13',
+        getTerrain: () => terrain,
+        controller: objFx.controller ? { pos: { x: objFx.controller.x, y: objFx.controller.y } } : undefined,
+        storage: storage ? { pos: { x: storage.x, y: storage.y } } : undefined,
+        find: (type) => {
+          if (type === FIND_SOURCES) return objFx.sources.map((s) => ({ pos: { x: s.x, y: s.y } }));
+          if (type === FIND_MINERALS) return objFx.mineral ? [{ pos: { x: objFx.mineral.x, y: objFx.mineral.y } }] : [];
+          if (type === FIND_MY_SPAWNS) return [{ pos: { x: spawn.x, y: spawn.y } }];
+          if (type === FIND_STRUCTURES) return objFx.structures.map((s) => ({ pos: { x: s.x, y: s.y }, structureType: TYPE_MAP[s.type] ?? s.type }));
+          return [];
+        },
+      };
+      const viaRoom = P.computePlan(room);
+      const strip = (p) => ({ anchor: p.anchor, structures: p.structures, ramparts: p.ramparts, roads: p.roads });
+      check(
+        'pure/W52S13: computePlan(room) delegates to buildPlan (equivalent plan)',
+        !!viaRoom && JSON.stringify(strip(viaRoom)) === JSON.stringify(strip(plan)),
+      );
+    }
   }
 }
 
