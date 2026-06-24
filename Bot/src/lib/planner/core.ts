@@ -42,6 +42,14 @@ export interface BuildPlanInput {
   mincutMargin?: number;
   /** Anchor must sit at least this far from the nearest exit (default 5). */
   exitMargin?: number;
+  /**
+   * When the rigid bunker stamp doesn't fit anywhere, fall back to the adaptive
+   * fitter (default true). The server-side Strategist leaves this on (it owns the
+   * heavy fitter work); the bot passes `false` for its cheap stamp-only attempt,
+   * deferring closed rooms to the server (SV3). With `false`, an unstampable room
+   * returns `null` instead of a fitter plan.
+   */
+  allowFitter?: boolean;
 }
 
 const packCoord = (x: number, y: number): number => x * 50 + y;
@@ -201,6 +209,10 @@ export function buildPlan(input: BuildPlanInput): RoomPlan | null {
   if (anchor) {
     structures = bunkerStructures(anchor.x, anchor.y);
     usedStamp = true;
+  } else if (input.allowFitter === false) {
+    // Stamp doesn't fit and the caller (the bot's cheap stamp-only attempt)
+    // opted out of the fitter — defer this room to the server-side planner.
+    return null;
   } else {
     const fit = fitStructures({
       terrain,

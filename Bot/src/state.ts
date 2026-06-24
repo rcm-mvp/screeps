@@ -21,6 +21,10 @@ import { SETTINGS } from './settings';
 type ExecutorColonyState = ColonyState['colonies'][string] & {
   basePlan?: BasePlanSummary;
   mineral?: { type: MineralConstant; amount: number };
+  /** True when the room is too closed for the bunker stamp and is awaiting a
+   *  server-computed plan (SV3). The Strategist watches this to know which rooms
+   *  to plan on the box's CPU; cleared by the bot once any plan is cached. */
+  needsPlan?: boolean;
 };
 
 export interface Census {
@@ -68,6 +72,7 @@ export function writeState(census: Census, tickErrors: string[], cpuBySubsystem:
     };
     if (room.storage) colony.storageEnergy = room.storage.store[RESOURCE_ENERGY];
     if (room.memory.plan) colony.basePlan = room.memory.plan.summary;
+    if (room.memory.planRequest) colony.needsPlan = true;
     const mineral = room.find(FIND_MINERALS)[0];
     if (mineral) {
       colony.mineral = { type: mineral.mineralType, amount: room.storage?.store[mineral.mineralType] ?? 0 };

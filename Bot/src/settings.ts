@@ -62,6 +62,12 @@ export const SETTINGS = {
   // gated behind a healthy bucket. Per-tick work is just cheap site placement.
   /** Only compute a new plan when the bucket is at least this — never defense. */
   PLAN_BUCKET: 9000,
+  /** Ticks a room too closed for the bunker stamp waits for a server-computed
+   *  plan (segment 90) before the bot falls back to its own in-game fitter. The
+   *  Strategist normally answers within a few ticks; this window only matters
+   *  when the server is down/unreachable, so it's generous (the box isn't
+   *  reboot-proof — see the migration memory). SV3. */
+  PLAN_SERVER_GRACE: 500,
   /** RawMemory segment holding the roomName→plan map. 0–99; pick one nobody else uses. */
   PLAN_SEGMENT: 90,
   /** Layout/schema version. Bump to invalidate every cached plan and force a replan.

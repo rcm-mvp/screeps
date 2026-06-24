@@ -77,7 +77,7 @@ const unY = (c: number): number => c % 50;
  * Returns null if no anchor satisfies the constraints. The heavy logic is in
  * `buildPlan` — this adapter is the ONLY Room-coupled part of the pipeline.
  */
-export function computePlan(room: Room): RoomPlan | null {
+export function computePlan(room: Room, opts: { allowFitter?: boolean } = {}): RoomPlan | null {
   const sources = room.find(FIND_SOURCES);
   const mineral = room.find(FIND_MINERALS)[0];
   const spawn = room.find(FIND_MY_SPAWNS)[0];
@@ -97,6 +97,7 @@ export function computePlan(room: Room): RoomPlan | null {
     storagePos: room.storage ? { x: room.storage.pos.x, y: room.storage.pos.y } : null,
     mincutMargin: SETTINGS.MINCUT_MARGIN,
     exitMargin: SETTINGS.EXIT_MARGIN,
+    allowFitter: opts.allowFitter,
   });
   if (!plan) return null;
 
@@ -181,20 +182,48 @@ function writeSegment(map: Record<string, PackedPlan>): void {
   RawMemory.segments[SETTINGS.PLAN_SEGMENT] = JSON.stringify(map);
 }
 
-/** Compute, cache (segment + heap), and stamp the RoomMemory pointer. */
+/**
+ * Compute, cache (segment + heap), and stamp the RoomMemory pointer.
+ *
+ * Two-tier policy (STAMP.md §12, SV3): the rigid bunker stamp is computed cheaply
+ * in-game; rooms too closed for it are DEFERRED to the server-side planner (the
+ * Strategist computes the adaptive fit on the box's CPU and writes segment 90,
+ * which `getCachedPlan` then picks up). The in-game fitter is kept only as a
+ * grace-window fallback so a down/unreachable server can't stall a base forever.
+ */
 export function planRoom(room: Room): boolean {
   const map = ensureSegment();
   if (!map) return false; // segment not loaded yet — try again next tick
-  const plan = computePlan(room);
+
+  // 1. Stamp-only (cheap). Most rooms fit the rigid bunker and never pay for the
+  //    fitter or wait on the server.
+  let plan = computePlan(room, { allowFitter: false });
+
   if (!plan) {
-    log.warn(`planner: no valid anchor in ${room.name} (room too closed?)`);
-    return false;
+    // 2. Stamp doesn't fit → defer to the server (it owns the heavy fit). Record
+    //    the wait and hold off; only fall back to the in-game fitter once the
+    //    grace window lapses (server down / unreachable).
+    const req = room.memory.planRequest ?? (room.memory.planRequest = { since: Game.time });
+    const waited = Game.time - req.since;
+    if (waited < SETTINGS.PLAN_SERVER_GRACE) {
+      log.info(`planner: ${room.name} too closed for the stamp — awaiting server plan (${waited}/${SETTINGS.PLAN_SERVER_GRACE}t)`);
+      return false;
+    }
+    log.warn(`planner: ${room.name} no server plan after ${SETTINGS.PLAN_SERVER_GRACE}t — falling back to the in-game fitter`);
+    plan = computePlan(room, { allowFitter: true });
+    if (!plan) {
+      log.warn(`planner: no valid anchor in ${room.name} even with the fitter`);
+      return false;
+    }
   }
+
+  // Success (stamp or fallback fitter): cache + clear any pending server request.
   map[room.name] = encodePlan(plan);
   writeSegment(map);
   const heap = ensureHeap();
   heap.plans[room.name] = { v: plan.v, decoded: plan };
   room.memory.plan = { v: plan.v, seg: SETTINGS.PLAN_SEGMENT, summary: summarize(room, plan) };
+  delete room.memory.planRequest;
   log.info(
     `planner: plan for ${room.name} — anchor (${plan.anchor.x},${plan.anchor.y}), ` +
       `${plan.structures.length} structures, ${plan.ramparts.length} ramparts, ${plan.roads.length} roads`,

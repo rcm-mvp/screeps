@@ -35,6 +35,10 @@ declare global {
     /** Base-plan pointer: version + segment id + compact progress summary. The
      *  heavy plan (structures/ramparts/roads) lives in the RawMemory segment. */
     plan?: PlanPointer;
+    /** Set when the room is too closed for the bunker stamp and is awaiting a
+     *  server-computed plan (SV3). `since` is the tick the wait began; surfaced as
+     *  `needsPlan` in ColonyState and cleared once any plan is cached. */
+    planRequest?: { since: number };
     intel?: { scoutedAt: number; sources: number; owner?: string; level?: number; hostiles: number };
   }
 }

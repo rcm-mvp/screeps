@@ -23,10 +23,14 @@ export function runConstruction(room: Room): void {
   if (!plan) {
     // No cached plan (or a stale version). Planning is heavy (min-cut), so it's
     // gated behind a healthy bucket and runs at most once per room — defense is
-    // never affected. Placement resumes next tick once the plan is cached.
+    // never affected. planRoom() tries the cheap stamp, else defers to the
+    // server-side planner (SV3). Placement resumes once a plan is cached.
     if (bucket() >= SETTINGS.PLAN_BUCKET) planRoom(room);
     return;
   }
+  // A plan is available (stamp, server-written, or fitter fallback) — any pending
+  // server request is satisfied.
+  if (room.memory.planRequest) delete room.memory.planRequest;
 
   if (anchorBroken(room, plan)) {
     invalidate(room);

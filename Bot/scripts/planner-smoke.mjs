@@ -961,6 +961,13 @@ const idx = P.idx;
     const plan2 = P.buildPlan(input);
     check('pure/W52S13: deterministic (identical plan on re-run)', JSON.stringify(plan) === JSON.stringify(plan2));
 
+    // --- SV3: stamp-only mode defers a too-closed room (no fitter fallback) ---
+    // W52S13 is too closed for the rigid stamp, so the bot's cheap stamp-only
+    // attempt (allowFitter:false) must return null — that's the signal that the
+    // room is deferred to the server-side planner. With the fitter on it plans.
+    check('pure/W52S13: buildPlan({allowFitter:false}) returns null (stamp deferral)', P.buildPlan({ ...input, allowFitter: false }) === null);
+    check('pure/W52S13: buildPlan({allowFitter:true}) still plans (server/grace path)', !!P.buildPlan({ ...input, allowFitter: true }));
+
     // --- encode/decode round-trips structures, ramparts AND roads ---
     const decoded = P.decodePlan(P.encodePlan(plan));
     check(
