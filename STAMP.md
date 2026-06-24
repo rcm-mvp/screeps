@@ -281,30 +281,54 @@ What's DONE (reusable): the pure `fit.ts` algorithm, `stamp.ts` fragments/tileFi
 and the full smoke validation against the real W52S13 terrain. These become the
 **shared planner core** the server runs.
 
-- [ ] **SV1 — Shared planner core.** Make the pure planner runnable under Node:
-      a `buildPlan(input)` orchestrator (terrain grid + objects → `PackedPlan`)
-      that runs fit → derived containers/links/extractor → min-cut → roads →
-      encode, with **no `Game`/`Room`/`RawMemory`/`PathFinder`**. Define the
-      Screeps constants it uses as plain values (Node has no globals). Shared by
-      the bot (stamp path) and the Strategist. Decide the share mechanism (new
-      package vs vendor into API vs Bot-as-source + Strategist imports).
-- [ ] **SV2 — Pure roads pathfinder.** Replace the in-game `PathFinder` in the
-      roads step with a plain A*/Dijkstra over the 50×50 cost matrix, so roads
-      compute server-side (and deterministically in tests).
-- [ ] **SV3 — Bot: stamp-only + signal.** `computePlan` stops running the fitter
-      in-game; on stamp failure it flags the room "needs server plan" in
-      `ColonyState` (executor extension, like `colony.mineral`) and stops
-      re-attempting. Consume path (segment 90) unchanged.
-- [ ] **SV4 — Strategist planner loop.** Observe ColonyState → for a flagged room
-      with no current-version segment-90 plan: `rooms.terrain` + `rooms.objects`
-      → `buildPlan` → `memory.setSegment(90, merge)`. Idempotent, version-aware,
-      respects the write budget (a plan is written once per room).
-- [ ] **SV5 — Tests.** Unit: `buildPlan` on the W52S13 fixture under Node yields
-      the same valid/walkable/encodable plan (port the smoke invariants).
-      Strategist: a test that a flagged room → setSegment(90) with a decodable
-      plan. Re-run the bot smoke + itest (no regression to the stamp path).
-- [ ] **SV6 — Deploy + verify.** Strategist running, bot deployed; W52S13 gets a
-      server-computed plan in segment 90 and builds from it.
+- [x] **SV1 — Shared planner core.** DONE (commit 0a59912). Pure
+      `buildPlan(input): RoomPlan | null` in `Bot/src/lib/planner/core.ts` — fit →
+      derived containers/links/extractor → min-cut → roads, with **no
+      `Game`/`Room`/`RawMemory`/`PathFinder`/`FIND_*`** (only `STRUCTURE_*` /
+      `TERRAIN_MASK_*` constants). `plan.ts#computePlan` is now a thin Room→input
+      adapter over it. **Share mechanism chosen: Bot-as-source + esbuild bundle**
+      (see SV4) — a tiny pure entry `lib/planner/server.ts` exports
+      `planForServer(input, at)` (= buildPlan + encodePlan + PLAN_VERSION).
+- [x] **SV2 — Pure roads pathfinder.** DONE (0a59912). `roads.ts#planRoadsPure` /
+      `findPath` / `isReachable` — plain Dijkstra over the 50×50 cost matrix
+      (plain 2 / swamp 10 / road 1 / structure impassable), deterministic.
+      `core.ts#buildPlan` uses it; the in-game `PathFinder` variant (`planRoads`)
+      is now unused (kept as a legacy export). Fixed two real bugs surfaced by it:
+      `bunkerRoads` is gated to the stamp branch (it's garbage on the fitter's
+      free-form layout), and roads route to each key position's PICKUP
+      (container/link) so cramped sources are reachable.
+- [x] **SV3 — Bot: stamp-first + signal + grace fallback.** DONE (fdc3620).
+      `computePlan`/`buildPlan` gained `allowFitter`; `planRoom` tries stamp-only
+      first, else sets `room.memory.planRequest={since}` + surfaces
+      `colony.needsPlan` in ColonyState (executor extension, no contract bump) and
+      defers to the server. **Per the locked decision, the in-game fitter is KEPT
+      as a grace-window fallback** (`SETTINGS.PLAN_SERVER_GRACE=500t`): if the
+      server never answers the bot self-serves. Consume path (segment 90) unchanged.
+- [x] **SV4 — Strategist planner loop.** DONE (9d3335b). `Strategist/src/planner.ts`
+      watches ColonyState → for each `needsPlan` room with no current-version
+      segment-90 plan: `rooms.terrain` + `rooms.objects` → `planForServer` →
+      `memory.setSegment(90, MERGE)`. Idempotent, version-aware, debounced
+      (`PLANNER_RECOMPUTE_COOLDOWN_MS`), merge-safe (re-reads before write; aborts
+      on a failed read so it never clobbers the bot's stamp entries), honours the
+      kill switch. Vendored via `scripts/build-planner.mjs` (esbuild, constants
+      inlined via `define`) → `vendor/planner.js` (+ committed `planner.d.ts`).
+- [x] **SV5 — Tests.** DONE (9d3335b). `Strategist/test/planner.test.ts` (12):
+      vendored `planForServer` on the real W52S13 fixture under Node (valid,
+      anchors on spawn, deterministic) + the full Planner loop (writes segment 90,
+      idempotent, stale-version replan, debounce, merge-preserve, read-abort, kill
+      switch, disabled, unflagged). 51 Strategist tests green; bot smoke 180; bot
+      stamp path unchanged (scenario N liveness net still applies — open rooms hit
+      stamp-only on the first try, identical to before).
+- [ ] **SV6 — Deploy + verify (USER ACTION).** Re-deploy the bot (SV3 is NOT yet
+      on the live server) and run the Strategist with `PLANNER_ENABLED=true`
+      (default) + the kill switch off. Then confirm W52S13 gets a server-computed
+      plan in segment 90 and starts building (link/ramparts/walls appear). Steps:
+      1. Bot: `cd Bot && npm run build` → push the bundle to the live server.
+      2. Strategist: `cd Strategist && npm run build && npm start` (reads
+         `SCREEPS_TOKEN` from `.env`; binds loopback). Watch the log for
+         `planner: wrote W52S13 -> segment 90 (...)`.
+      3. In-game: within a few ticks the bot's `getCachedPlan` picks up segment 90,
+         `needsPlan` clears, and construction places the planned structures.
 
 **Resilience note:** the box isn't reboot-proof (tmux, see migration memory).
 Once segment 90 holds a plan it persists, so the server is only needed to
