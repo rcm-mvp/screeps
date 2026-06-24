@@ -53,6 +53,14 @@ export interface StrategistConfig {
   thresholds: Thresholds;
   ollama: OllamaConfig;
   screeps: ScreepsConfig;
+  planner: PlannerSettings;
+}
+
+export interface PlannerSettings {
+  /** Run the server-side base planner loop (writes RawMemory segment 90). */
+  enabled: boolean;
+  /** Don't recompute the same flagged room within this window (ms). */
+  recomputeCooldownMs: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -129,6 +137,10 @@ export function loadConfig(env: Env = process.env): StrategistConfig {
       host: isPrivate ? optional(env, 'SCREEPS_HOST') : presetHost,
       username: isPrivate ? optional(env, 'SCREEPS_USERNAME') : undefined,
       password: isPrivate ? optional(env, 'SCREEPS_PASSWORD') : undefined,
+    },
+    planner: {
+      enabled: bool(env, 'PLANNER_ENABLED', true),
+      recomputeCooldownMs: int(env, 'PLANNER_RECOMPUTE_COOLDOWN_MS', 120_000),
     },
   };
 }

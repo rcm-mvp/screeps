@@ -16,6 +16,7 @@ import { makeDecider } from './decider';
 import { History, SteeringStore } from './history';
 import { createServer } from './server';
 import { Strategist, type BridgePort, type Logger } from './strategist';
+import { Planner, type PlannerPort } from './planner';
 
 /** Minimal .env loader (Node 18 has no --env-file). Real env vars win. */
 function loadDotEnv(): void {
@@ -94,6 +95,39 @@ async function main(): Promise<void> {
     `started — decider=${config.decider} dryRun=${config.dryRun} killSwitch=${config.killSwitch} ` +
       `budget=${config.maxWritesPerHour}/hr`,
   );
+
+  // Server-side base planner (STAMP.md §12): a sibling loop that watches the same
+  // live ColonyState and, for rooms the bot flagged `needsPlan` (too closed for
+  // the rigid stamp), computes the adaptive plan on the box's CPU and writes it to
+  // RawMemory segment 90. Independent of the directive write loop above — it does
+  // not consume the directive budget or honour dry-run (it writes a base plan, not
+  // a directive), but it does back off on the kill switch.
+  if (config.planner.enabled) {
+    const plannerPort: PlannerPort = {
+      terrain: (room) => bridge.rooms.terrain(room),
+      objects: (room) => bridge.rooms.objects(room),
+      getSegment: (segment) => bridge.memory.getSegment(segment),
+      setSegment: (segment, data) => bridge.memory.setSegment(segment, data),
+    };
+    const planner = new Planner({
+      bridge: plannerPort,
+      config: config.planner,
+      logger,
+      killSwitch: () => strategist.isKilled(),
+    });
+    bridge.control.watchState((s) => planner.onState(s));
+    // Kick an immediate first pass off the startup snapshot rather than waiting
+    // for the next live state change.
+    try {
+      const snap = await bridge.commander.snapshot();
+      if (snap.state) planner.onState(snap.state);
+    } catch {
+      /* rely on watchState */
+    }
+    logger.info(`base planner ON — segment ${90} (recompute cooldown ${config.planner.recomputeCooldownMs}ms)`);
+  } else {
+    logger.info('base planner OFF (PLANNER_ENABLED=false)');
+  }
 
   const server = createServer(strategist, logger);
   // Bind to loopback by default: the control API is reached via the UI proxy

@@ -114,6 +114,12 @@ export class Strategist {
     return this.deps.now ? this.deps.now() : Date.now();
   }
 
+  /** Live kill-switch state — used by sibling loops (e.g. the planner) to back
+   *  off when the strategist is in hands-off mode. */
+  isKilled(): boolean {
+    return this.killSwitch;
+  }
+
   private log(): Logger {
     return this.deps.logger ?? noopLogger;
   }
